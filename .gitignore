@@ -2,3 +2,6 @@ notifier/venv/
 notifier/.env
 honeypot/cowrie-src/
 honeypot/.Dockerfile.swp
+parser/venv/
+parser/geoip/*.mmdb
+parser/.env
