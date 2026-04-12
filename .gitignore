@@ -1,0 +1,4 @@
+notifier/venv/
+notifier/.env
+honeypot/cowrie-src/
+honeypot/.Dockerfile.swp
