@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Honeypot Monitor</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="logo">🍯 Honeypot</div>
+    <nav>
+      <a href="#" class="nav-item active">📊 Dashboard</a>
+      <a href="#" class="nav-item">🔴 Tấn công</a>
+      <a href="#" class="nav-item">📈 Thống kê</a>
+    </nav>
+    <div class="status">🟢 Đang giám sát</div>
+  </div>
+  <div class="main">
+    <div class="header">
+      <div>
+        <h1>Dashboard</h1>
+        <p id="last-updated">Cập nhật lúc: --:--:--</p>
+      </div>
+      <button onclick="loadData()" class="btn-refresh">🔄 Làm mới</button>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card blue">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Tổng tấn công</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-value" id="stat-ips">0</div>
+        <div class="stat-label">IP unique</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-value" id="stat-failed">0</div>
+        <div class="stat-label">Brute-force</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-value" id="stat-success">0</div>
+        <div class="stat-label">Đăng nhập thành công ⚠️</div>
+      </div>
+    </div>
+    <div class="charts-grid">
+      <div class="card">
+        <h3>📊 Tấn công theo giờ</h3>
+        <canvas id="barChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>🥧 Phân loại tấn công</h3>
+        <canvas id="pieChart"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h3>🔴 Tấn công gần đây</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Thời gian</th><th>IP</th><th>Username</th>
+            <th>Password</th><th>Loại</th><th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody id="attack-tbody">
+          <tr><td colspan="6" style="text-align:center">Đang tải...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script src="js/data.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
