@@ -5,3 +5,5 @@ honeypot/.Dockerfile.swp
 parser/venv/
 parser/geoip/*.mmdb
 parser/.env
+**/__pycache__/
+**/*.pyc
