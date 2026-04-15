@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Statistics</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="logo">🍯 Honeypot</div>
+  <nav>
+    <a href="index.html" class="nav-item">📊 Dashboard</a>
+    <a href="attacks.html" class="nav-item">🔴 Tấn công</a>
+    <a href="stats.html" class="nav-item active">📈 Thống kê</a>
+  </nav>
+</div>
+
+<div class="main">
+
+  <h1>📈 Thống kê hệ thống</h1>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <h2 id="total">0</h2>
+      <p>Tổng attack</p>
+    </div>
+    <div class="stat-card">
+      <h2 id="ips">0</h2>
+      <p>IP unique</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Biểu đồ theo giờ</h3>
+    <canvas id="barChart"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Loại tấn công</h3>
+    <canvas id="pieChart"></canvas>
+  </div>
+
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/charts.js"></script>
+
+<script>
+async function loadStatsPage() {
+  const stats = await fetchStats()
+  const hours = await fetchHours()
+  const types = await fetchTypes()
+
+  document.getElementById('total').innerText = stats.total
+  document.getElementById('ips').innerText = stats.unique_ips
+
+  initBarChart(hours)
+  initPieChart(types)
+}
+
+loadStatsPage()
+</script>
+
+</body>
+</html>
