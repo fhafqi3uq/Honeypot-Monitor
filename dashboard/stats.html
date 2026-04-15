@@ -2,66 +2,132 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8"/>
-  <title>Statistics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Thống kê — Honeypot</title>
   <link rel="stylesheet" href="css/style.css"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
+  <div class="sidebar" id="sidebar">
+    <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
+    <nav>
+      <a href="index.html" class="nav-item">📊 <span>Dashboard</span></a>
+      <a href="attacks.html" class="nav-item">🔴 <span>Tấn công</span></a>
+      <a href="stats.html" class="nav-item active">📈 <span>Thống kê</span></a>
+    </nav>
+    <div class="status">🟢 <span>Đang giám sát</span></div>
+  </div>
 
-<div class="sidebar">
-  <div class="logo">🍯 Honeypot</div>
-  <nav>
-    <a href="index.html" class="nav-item">📊 Dashboard</a>
-    <a href="attacks.html" class="nav-item">🔴 Tấn công</a>
-    <a href="stats.html" class="nav-item active">📈 Thống kê</a>
-  </nav>
-</div>
+  <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
 
-<div class="main">
-
-  <h1>📈 Thống kê hệ thống</h1>
-
-  <div class="stats-grid">
-    <div class="stat-card">
-      <h2 id="total">0</h2>
-      <p>Tổng attack</p>
+  <div class="main" id="main">
+    <div class="header">
+      <div>
+        <h1>Thống kê hệ thống</h1>
+        <p id="last-updated">Cập nhật lúc: --:--:--</p>
+      </div>
+      <button onclick="loadStats()" class="btn-refresh">🔄 Làm mới</button>
     </div>
-    <div class="stat-card">
-      <h2 id="ips">0</h2>
-      <p>IP unique</p>
+
+    <div class="stats-grid">
+      <div class="stat-card blue">
+        <div class="stat-value" id="s-total">0</div>
+        <div class="stat-label">Tổng tấn công</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-value" id="s-ips">0</div>
+        <div class="stat-label">IP unique</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-value" id="s-failed">0</div>
+        <div class="stat-label">Brute-force</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-value" id="s-success">0</div>
+        <div class="stat-label">Đăng nhập ✓</div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="card">
+        <h3>📊 Tấn công theo giờ</h3>
+        <div class="chart-container"><canvas id="barChart"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>🥧 Phân loại tấn công</h3>
+        <div class="chart-container"><canvas id="pieChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h3>🏆 Top 10 IP tấn công</h3>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>#</th><th>IP</th><th>Số lần</th></tr></thead>
+            <tbody id="top-ips"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h3>🔑 Top 10 password bị thử</h3>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>#</th><th>Password</th><th>Số lần</th></tr></thead>
+            <tbody id="top-passwords"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="card">
-    <h3>Biểu đồ theo giờ</h3>
-    <canvas id="barChart"></canvas>
-  </div>
+  <script src="js/data.js"></script>
+  <script src="js/charts.js"></script>
+  <script>
+    
 
-  <div class="card">
-    <h3>Loại tấn công</h3>
-    <canvas id="pieChart"></canvas>
-  </div>
+    async function loadStats() {
+      const [stats, hours, types, topIPs, topPass] = await Promise.all([
+        fetchStats(),
+        fetchHours(),
+        fetchTypes(),
+        fetch(`${API_URL}/api/top-ips?limit=10`).then(r=>r.json()).catch(()=>({data:[]})),
+        fetch(`${API_URL}/api/top-passwords?limit=10`).then(r=>r.json()).catch(()=>({data:[]}))
+      ])
 
-</div>
+      document.getElementById('s-total').textContent   = stats.total || 0
+      document.getElementById('s-ips').textContent     = stats.unique_ips || 0
+      document.getElementById('s-failed').textContent  = stats.failed || 0
+      document.getElementById('s-success').textContent = stats.success || 0
 
-<script src="js/data.js"></script>
-<script src="js/charts.js"></script>
+      initBarChart(hours)
+      initPieChart(types)
 
-<script>
-async function loadStatsPage() {
-  const stats = await fetchStats()
-  const hours = await fetchHours()
-  const types = await fetchTypes()
+      document.getElementById('top-ips').innerHTML = (topIPs.data || []).map((d,i) =>
+        `<tr>
+          <td style="color:#64748b">${i+1}</td>
+          <td class="ip-text">${d.ip}</td>
+          <td><span class="badge failed">${d.count} lần</span></td>
+        </tr>`
+      ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 
-  document.getElementById('total').innerText = stats.total
-  document.getElementById('ips').innerText = stats.unique_ips
+      document.getElementById('top-passwords').innerHTML = (topPass.data || []).map((d,i) =>
+        `<tr>
+          <td style="color:#64748b">${i+1}</td>
+          <td style="font-family:monospace;color:#fbbf24">${d.password}</td>
+          <td><span class="badge failed">${d.count} lần</span></td>
+        </tr>`
+      ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 
-  initBarChart(hours)
-  initPieChart(types)
-}
+      document.getElementById('last-updated').textContent = 'Cập nhật lúc: ' + new Date().toLocaleTimeString('vi-VN')
+    }
 
-loadStatsPage()
-</script>
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open')
+    }
 
+    loadStats()
+    setInterval(loadStats, 30000)
+  </script>
 </body>
 </html>

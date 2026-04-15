@@ -2,73 +2,144 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8"/>
-  <title>Attack Logs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tấn công — Honeypot</title>
   <link rel="stylesheet" href="css/style.css"/>
 </head>
 <body>
+  <div class="sidebar" id="sidebar">
+    <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
+    <nav>
+      <a href="index.html" class="nav-item">📊 <span>Dashboard</span></a>
+      <a href="attacks.html" class="nav-item active">🔴 <span>Tấn công</span></a>
+      <a href="stats.html" class="nav-item">📈 <span>Thống kê</span></a>
+    </nav>
+    <div class="status">🟢 <span>Đang giám sát</span></div>
+  </div>
 
-<div class="sidebar">
-  <div class="logo">🍯 Honeypot</div>
-  <nav>
-    <a href="index.html" class="nav-item">📊 Dashboard</a>
-    <a href="attacks.html" class="nav-item active">🔴 Tấn công</a>
-    <a href="stats.html" class="nav-item">📈 Thống kê</a>
-  </nav>
-</div>
+  <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
 
-<div class="main">
+  <div class="main" id="main">
+    <div class="header">
+      <div>
+        <h1>Danh sách tấn công</h1>
+        <p id="last-updated">Cập nhật lúc: --:--:--</p>
+      </div>
+      <button onclick="loadAttackPage()" class="btn-refresh">🔄 Làm mới</button>
+    </div>
 
-  <h1>🔴 Danh sách tấn công</h1>
+    <div class="card filter-bar">
+      <div class="filter-row">
+        <div class="filter-group">
+          <label>🔍 Tìm IP</label>
+          <input id="filter-ip" placeholder="Nhập địa chỉ IP..." oninput="applyFilter()"/>
+        </div>
+        <div class="filter-group">
+          <label>📋 Loại tấn công</label>
+          <select id="filter-event" onchange="applyFilter()">
+            <option value="">Tất cả</option>
+            <option value="cowrie.login.failed">Login Failed</option>
+            <option value="cowrie.login.success">Login Success</option>
+            <option value="cowrie.command.input">Command Input</option>
+            <option value="cowrie.session.connect">Session Connect</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>👤 Username</label>
+          <input id="filter-user" placeholder="Tìm username..." oninput="applyFilter()"/>
+        </div>
+        <div class="filter-stats">
+          <span id="filter-count" class="badge">0 kết quả</span>
+          <button onclick="clearFilter()" class="btn-clear">✕ Xoá lọc</button>
+        </div>
+      </div>
+    </div>
 
-  <input id="search-ip" placeholder="Tìm theo IP..." style="margin:10px 0; padding:8px"/>
+    <div class="card">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Thời gian</th>
+              <th>IP nguồn</th>
+              <th>Quốc gia</th>
+              <th>Username</th>
+              <th>Password</th>
+              <th>Loại</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody id="attack-tbody">
+            <tr><td colspan="7" class="loading">Đang tải...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Time</th>
-        <th>IP</th>
-        <th>User</th>
-        <th>Password</th>
-        <th>Event</th>
-      </tr>
-    </thead>
-    <tbody id="attack-tbody"></tbody>
-  </table>
+  <script src="js/data.js"></script>
+  <script>
+    let allAttacks = []
 
-</div>
+    async function loadAttackPage() {
+      document.getElementById('attack-tbody').innerHTML = '<tr><td colspan="7" class="loading">Đang tải...</td></tr>'
+      allAttacks = await fetchAttacks()
+      applyFilter()
+      document.getElementById('last-updated').textContent = 'Cập nhật lúc: ' + new Date().toLocaleTimeString('vi-VN')
+    }
 
-<script src="js/data.js"></script>
-<script src="js/app.js"></script>
+    function renderTable(data) {
+      document.getElementById('filter-count').textContent = data.length + ' kết quả'
+      const tbody = document.getElementById('attack-tbody')
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">Không có dữ liệu</td></tr>'
+        return
+      }
+      tbody.innerHTML = data.map(a => {
+        const isSuccess = a.event === 'cowrie.login.success'
+        const isCommand = a.event === 'cowrie.command.input'
+        const status    = isSuccess ? 'success' : 'failed'
+        const label     = isSuccess ? '✓ Success' : isCommand ? '⌨ Command' : '✗ Failed'
+        const eventShort = (a.event || '').replace('cowrie.', '')
+        return `
+          <tr>
+            <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${a.time || '--'}</td>
+            <td class="ip-text">${a.ip || '-'}</td>
+            <td style="font-size:13px">${a.country || '—'}</td>
+            <td style="color:#e2e8f0">${a.username || '-'}</td>
+            <td style="color:#94a3b8;font-family:monospace;font-size:12px">${a.password || '-'}</td>
+            <td style="color:#64748b;font-size:12px">${eventShort}</td>
+            <td><span class="badge ${status}">${label}</span></td>
+          </tr>`
+      }).join('')
+    }
 
-<script>
-let allAttacks = []
+    function applyFilter() {
+      const ip    = document.getElementById('filter-ip').value.toLowerCase()
+      const event = document.getElementById('filter-event').value
+      const user  = document.getElementById('filter-user').value.toLowerCase()
+      const filtered = allAttacks.filter(a => {
+        const matchIP    = !ip    || (a.ip || '').toLowerCase().includes(ip)
+        const matchEvent = !event || a.event === event
+        const matchUser  = !user  || (a.username || '').toLowerCase().includes(user)
+        return matchIP && matchEvent && matchUser
+      })
+      renderTable(filtered)
+    }
 
-async function loadAttackPage() {
-  allAttacks = await fetchAttacks()
-  renderTable(allAttacks)
-}
+    function clearFilter() {
+      document.getElementById('filter-ip').value = ''
+      document.getElementById('filter-event').value = ''
+      document.getElementById('filter-user').value = ''
+      applyFilter()
+    }
 
-function renderTable(data) {
-  const tbody = document.getElementById('attack-tbody')
-  tbody.innerHTML = data.map(a => `
-    <tr>
-      <td>${a.time}</td>
-      <td>${a.ip}</td>
-      <td>${a.username || '-'}</td>
-      <td>${a.password || '-'}</td>
-      <td>${a.event}</td>
-    </tr>
-  `).join('')
-}
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open')
+    }
 
-document.getElementById('search-ip').addEventListener('input', e => {
-  const keyword = e.target.value
-  const filtered = allAttacks.filter(a => a.ip.includes(keyword))
-  renderTable(filtered)
-})
-
-loadAttackPage()
-</script>
-
+    loadAttackPage()
+    setInterval(loadAttackPage, 30000)
+  </script>
 </body>
 </html>
