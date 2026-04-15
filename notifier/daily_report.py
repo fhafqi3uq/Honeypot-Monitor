@@ -2,36 +2,50 @@ import json
 import os
 import schedule
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import Counter
-from bot import send_message  # Gọi hàm từ file bot.py có sẵn của bạn
+from bot import send_message
 
-# Đường dẫn đến file log mẫu
-LOG_FILE = os.path.join(os.path.dirname(__file__), '../honeypot/sample_log.json')
+LOG_FILE = os.path.expanduser(
+    "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
+)
+SAMPLE_LOG = os.path.join(os.path.dirname(__file__), '../honeypot/sample_log.json')
 
 def process_logs():
     stats = {
         "total_sessions": 0,
-        "login_success": 0,
-        "login_failed": 0,
-        "usernames": [],
-        "passwords": [],
-        "commands": [],
-        "unique_ips": set()
+        "login_success":  0,
+        "login_failed":   0,
+        "usernames":      [],
+        "passwords":      [],
+        "commands":       [],
+        "unique_ips":     set()
     }
 
-    if not os.path.exists(LOG_FILE):
-        print(f"❌ Không tìm thấy file: {LOG_FILE}")
+    # Ưu tiên log thật, fallback về sample log
+    log_path = os.path.expanduser(LOG_FILE)
+    if not os.path.exists(log_path):
+        log_path = os.path.expanduser(SAMPLE_LOG)
+
+    if not os.path.exists(log_path):
+        print(f"❌ Không tìm thấy file log!")
         return None
 
-    with open(LOG_FILE, 'r', encoding='utf-8') as f:
+    # Chỉ lấy log của ngày hôm nay
+    today = datetime.now().strftime("%Y-%m-%d")
+    count_today = 0
+
+    with open(log_path, 'r', encoding='utf-8') as f:
         for line in f:
             try:
-                event = json.loads(line.strip())
-                # Cowrie logs thường có timestamp dạng: 2026-04-12T11:39:40.335530Z
-                # Ở đây mình tạm thời lấy hết dữ liệu trong file để demo, 
-                # Nếu muốn lọc 24h, bạn có thể so sánh event['timestamp']
-                
+                event     = json.loads(line.strip())
+                timestamp = event.get("timestamp", "")
+
+                # Bỏ qua log không phải hôm nay
+                if not timestamp.startswith(today):
+                    continue
+
+                count_today += 1
                 event_id = event.get("eventid")
                 stats["unique_ips"].add(event.get("src_ip"))
 
@@ -48,54 +62,69 @@ def process_logs():
                     stats["commands"].append(event.get("input"))
             except Exception:
                 continue
+
+    print(f"📋 Tìm thấy {count_today} sự kiện hôm nay ({today})")
     return stats
 
 def send_daily_report():
-    print(f"[{datetime.now()}] Đang tổng hợp báo cáo...")
+    print(f"[{datetime.now()}] Đang tổng hợp báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}...")
     data = process_logs()
-    
-    if not data: return
 
-    # Thống kê top 3
+    if not data:
+        return
+
     top_users = Counter(data["usernames"]).most_common(3)
-    top_pass = Counter(data["passwords"]).most_common(3)
-    
-    user_str = "\n".join([f"• {u[0]} ({u[1]} lần)" for u in top_users]) or "N/A"
-    pass_str = "\n".join([f"• {p[0]} ({p[1]} lần)" for p in top_pass]) or "N/A"
-    last_cmd = data["commands"][-1] if data["commands"] else "N/A"
+    top_pass  = Counter(data["passwords"]).most_common(3)
 
-    # Format tin nhắn HTML cho Telegram (phù hợp với bot.py của bạn)
+    user_str = "\n".join([f"  {i+1}. {u[0]} — {u[1]} lần" for i, u in enumerate(top_users)]) or "  Chưa có dữ liệu"
+    pass_str = "\n".join([f"  {i+1}. {p[0]} — {p[1]} lần" for i, p in enumerate(top_pass)]) or "  Chưa có dữ liệu"
+    last_cmd = data["commands"][-1] if data["commands"] else "Không có"
+
+    # Đánh giá mức độ nguy hiểm
+    if data["login_success"] > 0:
+        danger = "🔴 NGUY HIỂM — Có kẻ đăng nhập thành công!"
+    elif data["login_failed"] > 50:
+        danger = "🟠 CẢNH BÁO — Brute-force mạnh!"
+    elif data["login_failed"] > 10:
+        danger = "🟡 CHÚ Ý — Có hoạt động tấn công"
+    else:
+        danger = "🟢 BÌNH THƯỜNG — Ít tấn công hôm nay"
+
     msg = (
-        f"📊 <b>BÁO CÁO HONEΥPOT HÀNG NGÀY</b>\n"
-        f"📅 <i>Ngày: {datetime.now().strftime('%d/%m/%Y')}</i>\n"
+        f"📊 <b>BÁO CÁO HONEYPOT HÀNG NGÀY</b>\n"
+        f"📅 <i>{datetime.now().strftime('%d/%m/%Y')}</i>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🌐 <b>Tổng Sessions:</b> <code>{data['total_sessions']}</code>\n"
-        f"👤 <b>IP duy nhất:</b> <code>{len(data['unique_ips'])}</code>\n\n"
-        f"✅ <b>Đăng nhập OK:</b> <pre>{data['login_success']}</pre>\n"
-        f"❌ <b>Đăng nhập SAI:</b> <code>{data['login_failed']}</code>\n"
+        f"{danger}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔝 <b>Top Username:</b>\n{user_str}\n\n"
-        f"🔑 <b>Top Password:</b>\n{pass_str}\n"
+        f"🌐 Tổng sessions: <b>{data['total_sessions']}</b>\n"
+        f"👤 IP unique: <b>{len(data['unique_ips'])}</b>\n"
+        f"✅ Đăng nhập OK: <b>{data['login_success']}</b>\n"
+        f"❌ Đăng nhập SAI: <b>{data['login_failed']}</b>\n"
+        f"⌨️ Lệnh nguy hiểm: <b>{len(data['commands'])}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💻 <b>Lệnh cuối cùng:</b> <code>{last_cmd}</code>\n"
+        f"🔝 <b>Top 3 Username bị thử:</b>\n{user_str}\n\n"
+        f"🔑 <b>Top 3 Password bị thử:</b>\n{pass_str}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ <i>Gửi tự động từ VMware Monitor</i>"
+        f"💻 Lệnh cuối: <code>{last_cmd}</code>\n"
+        f"⏰ <i>Báo cáo tự động lúc {datetime.now().strftime('%H:%M:%S')}</i>"
     )
 
     if send_message(msg):
-        print("✅ Đã bắn báo cáo lên Telegram!")
+        print("✅ Đã gửi báo cáo lên Telegram!")
     else:
-        print("❌ Gửi tin nhắn thất bại.")
+        print("❌ Gửi thất bại.")
 
-# Lập lịch chạy lúc 8:00 mỗi ngày
-schedule.every().day.at("15:00").do(send_daily_report)
+# Lập lịch 8h sáng mỗi ngày
+schedule.every().day.at("08:00").do(send_daily_report)
 
 if __name__ == "__main__":
-    print("🚀 Báo cáo tự động đang chạy. Đợi đến 15:00 PM...")
-    
-    # Nếu muốn chạy thử ngay bây giờ để xem kết quả, hãy để nó thẳng hàng như thế này:
-   # send_daily_report() 
-    
+    print("🚀 Scheduler đang chạy...")
+    print(f"📋 Báo cáo tự động lúc 08:00 mỗi ngày")
+    print(f"📅 Hôm nay: {datetime.now().strftime('%d/%m/%Y')}")
+
+    # Test ngay
+    send_daily_report()
+
     while True:
         schedule.run_pending()
         time.sleep(60)
