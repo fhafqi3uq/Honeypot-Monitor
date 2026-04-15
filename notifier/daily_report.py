@@ -88,10 +88,10 @@ def send_daily_report():
         print("❌ Gửi tin nhắn thất bại.")
 
 # Lập lịch chạy lúc 8:00 mỗi ngày
-schedule.every().day.at("14:35").do(send_daily_report)
+schedule.every().day.at("15:00").do(send_daily_report)
 
 if __name__ == "__main__":
-    print("🚀 Báo cáo tự động đang chạy. Đợi đến 08:00 AM...")
+    print("🚀 Báo cáo tự động đang chạy. Đợi đến 15:00 PM...")
     
     # Nếu muốn chạy thử ngay bây giờ để xem kết quả, hãy để nó thẳng hàng như thế này:
    # send_daily_report() 
