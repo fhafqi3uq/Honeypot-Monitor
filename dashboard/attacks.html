@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Attack Logs</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="logo">🍯 Honeypot</div>
+  <nav>
+    <a href="index.html" class="nav-item">📊 Dashboard</a>
+    <a href="attacks.html" class="nav-item active">🔴 Tấn công</a>
+    <a href="stats.html" class="nav-item">📈 Thống kê</a>
+  </nav>
+</div>
+
+<div class="main">
+
+  <h1>🔴 Danh sách tấn công</h1>
+
+  <input id="search-ip" placeholder="Tìm theo IP..." style="margin:10px 0; padding:8px"/>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>IP</th>
+        <th>User</th>
+        <th>Password</th>
+        <th>Event</th>
+      </tr>
+    </thead>
+    <tbody id="attack-tbody"></tbody>
+  </table>
+
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+
+<script>
+let allAttacks = []
+
+async function loadAttackPage() {
+  allAttacks = await fetchAttacks()
+  renderTable(allAttacks)
+}
+
+function renderTable(data) {
+  const tbody = document.getElementById('attack-tbody')
+  tbody.innerHTML = data.map(a => `
+    <tr>
+      <td>${a.time}</td>
+      <td>${a.ip}</td>
+      <td>${a.username || '-'}</td>
+      <td>${a.password || '-'}</td>
+      <td>${a.event}</td>
+    </tr>
+  `).join('')
+}
+
+document.getElementById('search-ip').addEventListener('input', e => {
+  const keyword = e.target.value
+  const filtered = allAttacks.filter(a => a.ip.includes(keyword))
+  renderTable(filtered)
+})
+
+loadAttackPage()
+</script>
+
+</body>
+</html>
