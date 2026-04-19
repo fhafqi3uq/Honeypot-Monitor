@@ -42,7 +42,7 @@ def parse_event(raw: dict):
         "latitude":     geo["latitude"],
         "longitude":    geo["longitude"],
         "alerted":      False,
-        "created_at":   datetime.now(datetime.timezone.utc)
+        "created_at":   datetime.utcnow()
     }
 
 def watch_log():
