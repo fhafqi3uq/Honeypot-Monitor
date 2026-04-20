@@ -27,7 +27,10 @@
         <h1>Thống kê hệ thống</h1>
         <p id="last-updated">Cập nhật lúc: --:--:--</p>
       </div>
-      <button onclick="loadStats()" class="btn-refresh">🔄 Làm mới</button>
+      <div style="display:flex;gap:8px">
+        <a href="http://localhost:8000/api/export/csv" download="honeypot_attacks.csv" class="btn-refresh">📥 Export CSV</a>
+        <button onclick="loadStats()" class="btn-refresh">🔄 Làm mới</button>
+      </div>
     </div>
 
     <div class="stats-grid">
@@ -60,6 +63,14 @@
       </div>
     </div>
 
+    <!-- Biểu đồ top quốc gia -->
+    <div class="card">
+      <h3>🌍 Top 10 quốc gia tấn công</h3>
+      <div class="chart-container" style="height:300px">
+        <canvas id="countryChart"></canvas>
+      </div>
+    </div>
+
     <div class="two-col">
       <div class="card">
         <h3>🏆 Top 10 IP tấn công</h3>
@@ -80,20 +91,34 @@
         </div>
       </div>
     </div>
+
+    <!-- Top username -->
+    <div class="card">
+      <h3>👤 Top 10 username bị thử</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>#</th><th>Username</th><th>Số lần</th></tr></thead>
+          <tbody id="top-usernames"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="js/data.js"></script>
   <script src="js/charts.js"></script>
   <script>
     
+    let countryChart = null
 
     async function loadStats() {
-      const [stats, hours, types, topIPs, topPass] = await Promise.all([
+      const [stats, hours, types, topIPs, topPass, topUsers, countries] = await Promise.all([
         fetchStats(),
         fetchHours(),
         fetchTypes(),
-        fetch(`${API_URL}/api/top-ips?limit=10`).then(r=>r.json()).catch(()=>({data:[]})),
-        fetch(`${API_URL}/api/top-passwords?limit=10`).then(r=>r.json()).catch(()=>({data:[]}))
+        fetchTopIPs(),
+        fetchTopPasswords(),
+        fetch(`${API_URL}/api/top-usernames?limit=10`).then(r=>r.json()).catch(()=>({data:[]})),
+        fetch(`${API_URL}/api/stats/countries`).then(r=>r.json()).catch(()=>({data:[]}))
       ])
 
       document.getElementById('s-total').textContent   = stats.total || 0
@@ -103,24 +128,70 @@
 
       initBarChart(hours)
       initPieChart(types)
+      initCountryChart(countries.data || [])
 
-      document.getElementById('top-ips').innerHTML = (topIPs.data || []).map((d,i) =>
-        `<tr>
-          <td style="color:#64748b">${i+1}</td>
-          <td class="ip-text">${d.ip}</td>
-          <td><span class="badge failed">${d.count} lần</span></td>
-        </tr>`
-      ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
+      document.getElementById('top-ips').innerHTML = topIPs
+        .filter(d => d.ip !== '127.0.0.1')
+        .map((d,i) => `
+          <tr>
+            <td style="color:#64748b">${i+1}</td>
+            <td style="font-family:monospace;color:#60a5fa">${d.ip}</td>
+            <td><span class="badge failed">${d.count} lần</span></td>
+          </tr>`
+        ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 
-      document.getElementById('top-passwords').innerHTML = (topPass.data || []).map((d,i) =>
-        `<tr>
-          <td style="color:#64748b">${i+1}</td>
-          <td style="font-family:monospace;color:#fbbf24">${d.password}</td>
-          <td><span class="badge failed">${d.count} lần</span></td>
-        </tr>`
-      ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
+      document.getElementById('top-passwords').innerHTML = topPass
+        .map((d,i) => `
+          <tr>
+            <td style="color:#64748b">${i+1}</td>
+            <td style="font-family:monospace;color:#fbbf24">${d.password}</td>
+            <td><span class="badge failed">${d.count} lần</span></td>
+          </tr>`
+        ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 
-      document.getElementById('last-updated').textContent = 'Cập nhật lúc: ' + new Date().toLocaleTimeString('vi-VN')
+      document.getElementById('top-usernames').innerHTML = (topUsers.data || [])
+        .map((d,i) => `
+          <tr>
+            <td style="color:#64748b">${i+1}</td>
+            <td style="color:#a78bfa">${d.username}</td>
+            <td><span class="badge failed">${d.count} lần</span></td>
+          </tr>`
+        ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
+
+      document.getElementById('last-updated').textContent =
+        'Cập nhật lúc: ' + new Date().toLocaleTimeString('vi-VN')
+    }
+
+    function initCountryChart(data) {
+      const filtered = data.filter(d => d.country !== "Local").slice(0, 10)
+      const ctx = document.getElementById('countryChart').getContext('2d')
+
+      if (countryChart) countryChart.destroy()
+
+      countryChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: filtered.map(d => d.country),
+          datasets: [{
+            label: 'Số lần tấn công',
+            data:  filtered.map(d => d.count),
+            backgroundColor: [
+              '#ef4444','#f59e0b','#3b82f6','#8b5cf6','#10b981',
+              '#ec4899','#06b6d4','#84cc16','#f97316','#6366f1'
+            ],
+            borderRadius: 6,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e2130' } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: '#2d3748' } }
+          }
+        }
+      })
     }
 
     function toggleSidebar() {
