@@ -38,3 +38,9 @@ echo "📊 Dashboard: http://localhost:8080"
 echo "🔌 API:       http://localhost:8000"
 echo "📱 Telegram:  Cảnh báo realtime"
 echo "📋 Báo cáo:   Tự động 8h sáng"
+
+# Auto cleanup log cũ hơn 30 ngày
+cd ~/Honeypot-Monitor/parser
+source venv/bin/activate
+nohup python3 cleanup.py > /tmp/cleanup.log 2>&1 &
+echo "✅ Auto cleanup started (xoá log >30 ngày lúc 00:00)"

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Bản đồ — Honeypot</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    #map { height: 500px; border-radius: 12px; }
+  </style>
+</head>
+<body>
+  <div class="sidebar" id="sidebar">
+    <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
+    <nav>
+      <a href="index.html" class="nav-item">📊 <span>Dashboard</span></a>
+      <a href="attacks.html" class="nav-item">🔴 <span>Tấn công</span></a>
+      <a href="stats.html" class="nav-item">📈 <span>Thống kê</span></a>
+      <a href="map.html" class="nav-item active">🗺️ <span>Bản đồ</span></a>
+    </nav>
+    <div class="status">🟢 <span>Đang giám sát</span></div>
+  </div>
+
+  <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+
+  <div class="main" id="main">
+    <div class="header">
+      <div>
+        <h1>🗺️ Bản đồ tấn công thế giới</h1>
+        <p id="last-updated">Cập nhật lúc: --:--:--</p>
+      </div>
+      <button onclick="loadMap()" class="btn-refresh">🔄 Làm mới</button>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card blue">
+        <div class="stat-value" id="map-total">0</div>
+        <div class="stat-label">Tổng IP</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-value" id="map-countries">0</div>
+        <div class="stat-label">Quốc gia</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-value" id="map-top-country">—</div>
+        <div class="stat-label">Quốc gia nhiều nhất</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-value" id="map-top-ip">—</div>
+        <div class="stat-label">IP nhiều nhất</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="map"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>📍 Danh sách IP theo vị trí</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr><th>#</th><th>IP</th><th>Quốc gia</th><th>Thành phố</th><th>Số lần</th></tr>
+          </thead>
+          <tbody id="map-tbody">
+            <tr><td colspan="5" class="loading">Đang tải...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "http://localhost:8000"
+    let map = null
+    let markers = []
+
+    function initMap() {
+      map = L.map('map').setView([20, 0], 2)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap'
+      }).addTo(map)
+    }
+
+    async function loadMap() {
+      try {
+        const res  = await fetch(`${API_URL}/api/map-data`)
+        const data = await res.json()
+        const ips  = data.data || []
+
+        markers.forEach(m => m.remove())
+        markers = []
+
+        const countries = new Set(ips.map(d => d.country).filter(c => c && c !== "Local"))
+        document.getElementById('map-total').textContent     = ips.filter(d => d.country !== "Local").length
+        document.getElementById('map-countries').textContent = countries.size
+
+        if (ips.length > 0) {
+          document.getElementById('map-top-ip').textContent      = ips[0].ip
+          document.getElementById('map-top-country').textContent = ips[0].country || "—"
+        }
+
+        ips.forEach(d => {
+          if (!d.latitude || !d.longitude || d.latitude === 0) return
+          const color = d.count > 50 ? '#ef4444' : d.count > 10 ? '#f59e0b' : '#3b82f6'
+          const size  = Math.min(30, Math.max(10, d.count / 2))
+          const icon  = L.divIcon({
+            html: `<div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;border:2px solid white;opacity:0.85"></div>`,
+            className: '',
+            iconSize: [size, size]
+          })
+          const marker = L.marker([d.latitude, d.longitude], { icon })
+            .addTo(map)
+            .bindPopup(`<b>${d.ip}</b><br/>📍 ${d.city}, ${d.country}<br/>🔢 ${d.count} lần`)
+          markers.push(marker)
+        })
+
+        document.getElementById('map-tbody').innerHTML = ips
+          .filter(d => d.country !== "Local")
+          .map((d, i) => `
+            <tr>
+              <td style="color:#64748b">${i+1}</td>
+              <td style="font-family:monospace;color:#60a5fa">${d.ip}</td>
+              <td>${d.country || '—'}</td>
+              <td style="color:#94a3b8">${d.city || '—'}</td>
+              <td><span class="badge failed">${d.count} lần</span></td>
+            </tr>
+          `).join('') || '<tr><td colspan="5" class="loading">Chưa có IP từ internet</td></tr>'
+
+        document.getElementById('last-updated').textContent =
+          'Cập nhật lúc: ' + new Date().toLocaleTimeString('vi-VN')
+      } catch(e) {
+        console.error(e)
+      }
+    }
+
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open')
+    }
+
+    initMap()
+    loadMap()
+    setInterval(loadMap, 30000)
+  </script>
+</body>
+</html>
