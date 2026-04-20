@@ -1,0 +1,5 @@
+nohup: ignoring input
+Traceback (most recent call last):
+  File "/home/dt/Desktop/Honeypot-Monitor/notifier/telegram_commands.py", line 4, in <module>
+    from pymongo import MongoClient
+ModuleNotFoundError: No module named 'pymongo'

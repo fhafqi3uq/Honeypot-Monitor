@@ -573,3 +573,9 @@
 {"eventid":"cowrie.login.failed","username":"root","password":"1","message":"login attempt [root/1] failed","sensor":"Admin-PC","uuid":"8a0ddc62-3629-11f1-ae55-00155d4a169e","timestamp":"2026-04-12T11:54:47.397360Z","src_ip":"127.0.0.1","session":"a836ee0a56ca","protocol":"ssh"}
 {"eventid":"cowrie.login.failed","username":"root","password":"1","message":"login attempt [root/1] failed","sensor":"Admin-PC","uuid":"8a0ddc62-3629-11f1-ae55-00155d4a169e","timestamp":"2026-04-12T11:54:49.545501Z","src_ip":"127.0.0.1","session":"a836ee0a56ca","protocol":"ssh"}
 {"eventid":"cowrie.session.closed","duration":"8.8","message":"Connection lost after 8.8 seconds","sensor":"Admin-PC","uuid":"8a0ddc62-3629-11f1-ae55-00155d4a169e","timestamp":"2026-04-12T11:54:50.549366Z","src_ip":"127.0.0.1","session":"a836ee0a56ca","protocol":"ssh"}
+{"eventid": "cowrie.login.failed", "src_ip": "45.125.65.31", "username": "root", "password": "123", "timestamp": "2026-04-20T13:00:00Z", "session": "test1"}
+{"eventid": "cowrie.login.failed", "src_ip": "1.1.1.1", "username": "root", "password": "123", "timestamp": "2026-04-20T13:00:00Z"}
+{"eventid": "cowrie.login.failed", "src_ip": "114.232.1.45", "username": "admin", "password": "password", "timestamp": "2026-04-20T22:10:00Z"}
+{"eventid": "cowrie.login.failed", "src_ip": "66.249.66.1", "username": "root", "password": "root", "timestamp": "2026-04-20T22:15:00Z"}
+{"eventid": "cowrie.login.success", "src_ip": "1.2.3.4", "username": "dt-admin", "password": "dtu-password", "timestamp": "2026-04-20T22:20:00Z"}
+{"eventid": "cowrie.login.success", "src_ip": "185.220.101.45", "username": "admin", "password": "password123", "timestamp": "2026-04-20T22:00:00Z"}

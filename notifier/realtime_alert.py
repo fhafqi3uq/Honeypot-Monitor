@@ -6,8 +6,9 @@ from pymongo import MongoClient
 from bot import alert_login_failed, alert_login_success, alert_command
 
 # Đường dẫn log Cowrie
+
 LOG_FILE = os.path.expanduser(
-    "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
+    "~/Desktop/Honeypot-Monitor/honeypot/sample_log.json"
 )
 
 # Kết nối MongoDB
