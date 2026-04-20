@@ -9,7 +9,7 @@ async function fetchStats() {
 
 async function fetchAttacks() {
     try {
-        const res  = await fetch(`${API_URL}/api/attacks?limit=500`)
+        const res  = await fetch(`${API_URL}/api/attacks?limit=20`)
         const data = await res.json()
         return (data.data || []).map(a => ({
             time:     a.timestamp ? a.timestamp.substring(11,19) : "--:--:--",

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tìm kiếm IP — Honeypot</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+  <div class="sidebar" id="sidebar">
+    <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
+    <nav>
+      <a href="index.html" class="nav-item">📊 <span>Dashboard</span></a>
+      <a href="attacks.html" class="nav-item">🔴 <span>Tấn công</span></a>
+      <a href="stats.html" class="nav-item">📈 <span>Thống kê</span></a>
+      <a href="map.html" class="nav-item">🗺️ <span>Bản đồ</span></a>
+      <a href="search.html" class="nav-item active">🔍 <span>Tìm kiếm IP</span></a>
+    </nav>
+    <div class="status">🟢 <span>Đang giám sát</span></div>
+  </div>
+
+  <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+
+  <div class="main" id="main">
+    <div class="header">
+      <div>
+        <h1>🔍 Tìm kiếm IP</h1>
+        <p>Tra cứu toàn bộ lịch sử tấn công của một địa chỉ IP</p>
+      </div>
+    </div>
+
+    <!-- Ô tìm kiếm -->
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;gap:12px;align-items:flex-end">
+        <div class="filter-group" style="flex:1">
+          <label>🌐 Nhập địa chỉ IP cần tra cứu</label>
+          <input id="search-input" placeholder="VD: 185.220.101.45"
+            style="width:100%"
+            onkeydown="if(event.key==='Enter') searchIP()"/>
+        </div>
+        <button onclick="searchIP()" class="btn-refresh" style="padding:10px 24px">
+          🔍 Tìm kiếm
+        </button>
+        <button onclick="clearSearch()" class="btn-clear">✕ Xoá</button>
+      </div>
+    </div>
+
+    <!-- Kết quả -->
+    <div id="result-section" style="display:none">
+
+      <!-- Thông tin IP -->
+      <div class="stats-grid" style="margin-bottom:16px">
+        <div class="stat-card blue">
+          <div class="stat-value" id="r-total">0</div>
+          <div class="stat-label">Tổng sự kiện</div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="stat-value" id="r-failed">0</div>
+          <div class="stat-label">Login Failed</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-value" id="r-success">0</div>
+          <div class="stat-label">Login Success</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-value" id="r-country">—</div>
+          <div class="stat-label">Quốc gia</div>
+        </div>
+      </div>
+
+      <!-- Bảng lịch sử -->
+      <div class="card">
+        <div class="card-header">
+          <h3 id="result-title">Lịch sử tấn công</h3>
+          <span id="result-count" class="badge"></span>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Event</th>
+                <th>Username</th>
+                <th>Password</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody id="result-tbody">
+              <tr><td colspan="5" class="loading">Nhập IP để tìm kiếm</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trạng thái ban đầu -->
+    <div id="empty-state" class="card" style="text-align:center;padding:60px 20px">
+      <div style="font-size:48px;margin-bottom:16px">🔍</div>
+      <h3 style="color:#94a3b8;margin-bottom:8px">Nhập địa chỉ IP để tra cứu</h3>
+      <p style="color:#64748b">Xem toàn bộ lịch sử tấn công, username, password đã thử</p>
+    </div>
+
+  </div>
+
+  <script>
+    const API_URL = "http://localhost:8000"
+
+    async function searchIP() {
+      const ip = document.getElementById('search-input').value.trim()
+      if (!ip) return
+
+      document.getElementById('result-tbody').innerHTML =
+        '<tr><td colspan="5" class="loading">Đang tìm kiếm...</td></tr>'
+      document.getElementById('result-section').style.display = 'block'
+      document.getElementById('empty-state').style.display    = 'none'
+
+      try {
+        const res  = await fetch(`${API_URL}/api/search?ip=${encodeURIComponent(ip)}`)
+        const data = await res.json()
+        const list = data.data || []
+
+        // Thống kê
+        const failed  = list.filter(a => a.event === 'cowrie.login.failed').length
+        const success = list.filter(a => a.event === 'cowrie.login.success').length
+        const country = list[0]?.country || '—'
+
+        document.getElementById('r-total').textContent   = data.total || 0
+        document.getElementById('r-failed').textContent  = failed
+        document.getElementById('r-success').textContent = success
+        document.getElementById('r-country').textContent = country
+        document.getElementById('result-title').textContent = `Lịch sử tấn công của ${ip}`
+        document.getElementById('result-count').textContent = `${list.length} sự kiện`
+
+        if (list.length === 0) {
+          document.getElementById('result-tbody').innerHTML =
+            '<tr><td colspan="5" class="loading">Không tìm thấy IP này trong hệ thống</td></tr>'
+          return
+        }
+
+        document.getElementById('result-tbody').innerHTML = list.map(a => {
+          const isSuccess = a.event === 'cowrie.login.success'
+          const isCommand = a.event === 'cowrie.command.input'
+          const status    = isSuccess ? 'success' : 'failed'
+          const label     = isSuccess ? '✓ Success' : isCommand ? '⌨ Command' : '✗ Failed'
+          const time      = a.timestamp ? a.timestamp.substring(0,19).replace('T',' ') : '--'
+          return `
+            <tr>
+              <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${time}</td>
+              <td style="color:#64748b;font-size:12px">${(a.event||'').replace('cowrie.','')}</td>
+              <td style="color:#e2e8f0">${a.username||'-'}</td>
+              <td style="font-family:monospace;color:#94a3b8;font-size:12px">${a.password||'-'}</td>
+              <td><span class="badge ${status}">${label}</span></td>
+            </tr>`
+        }).join('')
+
+      } catch(e) {
+        document.getElementById('result-tbody').innerHTML =
+          '<tr><td colspan="5" class="loading">Lỗi kết nối API</td></tr>'
+      }
+    }
+
+    function clearSearch() {
+      document.getElementById('search-input').value      = ''
+      document.getElementById('result-section').style.display = 'none'
+      document.getElementById('empty-state').style.display    = 'block'
+    }
+
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open')
+    }
+  </script>
+</body>
+</html>

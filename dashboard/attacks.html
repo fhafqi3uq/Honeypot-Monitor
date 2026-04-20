@@ -22,6 +22,7 @@
       <a href="attacks.html" class="nav-item active">🔴 <span>Tấn công</span></a>
       <a href="stats.html" class="nav-item">📈 <span>Thống kê</span></a>
       <a href="map.html" class="nav-item">🗺️ <span>Bản đồ</span></a>
+      <a href="search.html" class="nav-item">🔍 <span>Tìm kiếm IP</span></a>
     </nav>
     <div class="status">🟢 <span>Đang giám sát</span></div>
   </div>
@@ -34,8 +35,8 @@
         <h1>Danh sách tấn công</h1>
         <p id="last-updated">Cập nhật lúc: --:--:--</p>
       </div>
-      <button onclick="loadAttackPage()" class="btn-refresh">🔄 Làm mới</button>
-      <a href="http://localhost:8000/api/export/csv" download="honeypot_attacks.csv" class="btn-refresh">📥 Export CSV</a>
+      <div style="display:flex;gap:8px"><button onclick="loadAttackPage()" class="btn-refresh">🔄 Làm mới</button>
+      <a href="http://localhost:8000/api/export/csv" download="honeypot_attacks.csv" class="btn-refresh">📥 Export CSV</a></div>
     </div>
 
     <div class="card filter-bar">
@@ -103,7 +104,17 @@
     async function loadAttackPage() {
       document.getElementById('attack-tbody').innerHTML =
         '<tr><td colspan="7" class="loading">Đang tải...</td></tr>'
-      allAttacks  = await fetchAttacks()
+      const r = await fetch('http://localhost:8000/api/attacks?limit=500')
+      const d = await r.json()
+      allAttacks = (d.data||[]).map(a=>({
+        time:     a.timestamp ? a.timestamp.substring(11,19) : "--",
+        ip:       a.src_ip,
+        username: a.username,
+        password: a.password,
+        command:  a.command,
+        event:    a.event,
+        country:  a.country || "Unknown"
+      }))
       filtered    = allAttacks
       currentPage = 1
       applyFilter()
