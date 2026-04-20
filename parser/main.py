@@ -1,84 +1,83 @@
 from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
-from typing import Optional
+from fastapi.responses import StreamingResponse
+import io
+import csv
 
-app = FastAPI(title="Honeypot API - Version 2")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+# Khởi tạo API
+app = FastAPI(
+    title="Honeypot API - Version 2 (Pro)",
+    description="Hệ thống phân tích và thống kê log tấn công từ Cowrie",
+    version="2.0.0"
 )
 
 # Kết nối MongoDB
-client = MongoClient("mongodb://localhost:27017")
+client = MongoClient("mongodb://localhost:27017/")
 db = client["honeypot"]
 collection = db["attacks"]
 
-@app.get("/")
-def read_root():
-    return {"message": "Honeypot API V2 đang chạy!", "status": "ok"}
+# 1. TẠO INDEX (Tăng tốc độ truy xuất dữ liệu)
+collection.create_index([("timestamp", -1)])
+collection.create_index([("src_ip", 1)])
 
-# 1. NÂNG CẤP: Lọc danh sách tấn công theo thời gian
-@app.get("/api/attacks")
-def get_attacks(
-    limit: int = 50,
-    start_date: Optional[str] = Query(None, description="Định dạng: YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="Định dạng: YYYY-MM-DD")
-):
-    """Lấy danh sách tấn công (có hỗ trợ lọc theo ngày)"""
+# ==========================================
+# CÁC API ENDPOINT
+# ==========================================
+
+# API cũ: Lấy danh sách tấn công chung
+@app.get("/api/attacks", tags=["General"])
+async def get_attacks(limit: int = 50, start_date: str = None, end_date: str = None):
     query = {}
+    if start_date and end_date:
+        query["timestamp"] = {"$gte": start_date, "$lte": end_date + "T23:59:59"}
     
-    # Nếu có truyền ngày bắt đầu hoặc kết thúc, thêm điều kiện lọc vào query
-    if start_date or end_date:
-        query["timestamp"] = {}
-        if start_date:
-            query["timestamp"]["$gte"] = f"{start_date}T00:00:00" # Lớn hơn hoặc bằng
-        if end_date:
-            query["timestamp"]["$lte"] = f"{end_date}T23:59:59"   # Nhỏ hơn hoặc bằng
+    results = list(collection.find(query, {"_id": 0}).sort("timestamp", -1).limit(limit))
+    return {"status": "success", "total_returned": len(results), "data": results}
 
-    attacks = list(
-        collection.find(query, {"_id": 0})
-        .sort("timestamp", -1)
-        .limit(limit)
-    )
-    return {"status": "success", "total_returned": len(attacks), "data": attacks}
+# 2. Thêm API: Thống kê Brute-force
+@app.get("/api/brute-force", tags=["Statistics"])
+async def get_brute_force_stats():
+    total_attempts = collection.count_documents({"event": "cowrie.login.failed"})
+    successful_logins = collection.count_documents({"event": "cowrie.login.success"})
+    return {
+        "total_brute_force_attempts": total_attempts,
+        "successful_logins": successful_logins
+    }
 
-# 2. API CŨ: Top IP (Giữ nguyên)
-@app.get("/api/top-ips")
-def get_top_ips(limit: int = 10):
-    """Thống kê các IP tấn công nhiều nhất"""
+# 3. Thêm API: Top Usernames bị tấn công nhiều nhất
+@app.get("/api/top-usernames", tags=["Statistics"])
+async def get_top_usernames(limit: int = 10):
     pipeline = [
-        {"$group": {"_id": "$src_ip", "count": {"$sum": 1}}},
+        {"$match": {"username": {"$ne": None, "$exists": True}}},
+        {"$group": {"_id": "$username", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
-        {"$limit": limit},
-        {"$project": {"ip": "$_id", "count": 1, "_id": 0}}
+        {"$limit": limit}
     ]
-    return {"status": "success", "data": list(collection.aggregate(pipeline))}
-
-# 3. MỚI: Thống kê số lượng tấn công theo TỪNG GIỜ
-@app.get("/api/stats/hourly")
-def get_hourly_stats(limit: int = 24):
-    """Phục vụ vẽ biểu đồ: Đếm số lượng tấn công theo từng giờ"""
-    pipeline = [
-        # Cắt chuỗi timestamp (VD: 2024-04-12T15:30:00Z) lấy 13 ký tự đầu để nhóm theo Giờ (2024-04-12T15)
-        {"$group": {
-            "_id": {"$substr": ["$timestamp", 0, 13]}, 
-            "count": {"$sum": 1}
-        }},
-        {"$sort": {"_id": -1}}, # Sắp xếp từ mới nhất đến cũ nhất
-        {"$limit": limit},
-        {"$project": {
-            "time": {"$concat": ["$_id", ":00"]}, # Nối thêm :00 cho đẹp (VD: 2024-04-12T15:00)
-            "count": 1, 
-            "_id": 0
-        }}
-    ]
-    
     results = list(collection.aggregate(pipeline))
-    # Đảo ngược lại list để biểu đồ vẽ từ trái sang phải (cũ đến mới)
-    results.reverse() 
+    return [{"username": r["_id"], "count": r["count"]} for r in results]
+
+# 4. Thêm API: Tra cứu lịch sử tấn công theo IP
+@app.get("/api/search", tags=["Search"])
+async def search_by_ip(ip: str = Query(..., description="Nhập địa chỉ IP cần tra cứu (VD: 192.168.x.x)")):
+    query = {"src_ip": ip}
+    results = list(collection.find(query, {"_id": 0}).sort("timestamp", -1))
+    return {"target_ip": ip, "total_events": len(results), "data": results}
+
+# 5. Thêm API: Xuất dữ liệu ra file CSV báo cáo
+@app.get("/api/export/csv", tags=["Export"])
+async def export_csv():
+    # Lấy 1000 dòng log mới nhất để xuất
+    data = list(collection.find({}, {"_id": 0}).sort("timestamp", -1).limit(1000))
     
-    return {"status": "success", "data": results}
+    output = io.StringIO()
+    if data:
+        # Lấy tên các cột tự động từ dữ liệu
+        writer = csv.DictWriter(output, fieldnames=data[0].keys())
+        writer.writeheader()
+        writer.writerows(data)
+    
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=honeypot_attacks_report.csv"}
+    )
