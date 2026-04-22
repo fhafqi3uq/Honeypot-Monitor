@@ -44,3 +44,9 @@ cd ~/Honeypot-Monitor/parser
 source venv/bin/activate
 nohup python3 cleanup.py > /tmp/cleanup.log 2>&1 &
 echo "✅ Auto cleanup started (xoá log >30 ngày lúc 00:00)"
+
+# Telegram Commands Bot
+cd ~/Honeypot-Monitor/notifier
+source venv/bin/activate
+nohup python3 telegram_commands.py > /tmp/commands.log 2>&1 &
+echo "✅ Telegram Commands started (/stats /top /brute /help)"
