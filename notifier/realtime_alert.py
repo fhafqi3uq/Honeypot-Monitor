@@ -8,7 +8,7 @@ from bot import alert_login_failed, alert_login_success, alert_command
 # Đường dẫn log Cowrie
 
 LOG_FILE = os.path.expanduser(
-    "/home/dt/Desktop/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
+    "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
 )
 
 # Kết nối MongoDB
