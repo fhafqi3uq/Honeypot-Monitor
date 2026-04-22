@@ -29,23 +29,23 @@ echo "✅ Dashboard started tại http://localhost:8080"
 # Realtime Alert
 cd "$PROJECT_DIR/notifier"
 source venv/bin/activate
-sleep 3 && nohup python3 -u realtime_alert.py > /tmp/realtime.log 2>&1 &
+pkill -f realtime_alert.py 2>/dev/null; sleep 3 && nohup python3 -u realtime_alert.py > /tmp/realtime.log 2>&1 &
 echo "✅ Realtime Alert started"
 
 # Daily Report
-nohup python3 -u daily_report.py > /tmp/daily.log 2>&1 &
+pkill -f daily_report.py 2>/dev/null; nohup python3 -u daily_report.py > /tmp/daily.log 2>&1 &
 echo "✅ Daily Report started (8h sáng mỗi ngày)"
 
 # Auto cleanup
 cd "$PROJECT_DIR/parser"
 source venv/bin/activate
-nohup python3 -u cleanup.py > /tmp/cleanup.log 2>&1 &
+pkill -f cleanup.py 2>/dev/null; nohup python3 -u cleanup.py > /tmp/cleanup.log 2>&1 &
 echo "✅ Auto cleanup started (xoá log >30 ngày lúc 00:00)"
 
 # Telegram Commands Bot
 cd "$PROJECT_DIR/notifier"
 source venv/bin/activate
-nohup python3 -u telegram_commands.py > /tmp/commands.log 2>&1 &
+pkill -f telegram_commands.py 2>/dev/null; nohup python3 -u telegram_commands.py > /tmp/commands.log 2>&1 &
 echo "✅ Telegram Commands started (/stats /top /brute /help)"
 
 echo ""
