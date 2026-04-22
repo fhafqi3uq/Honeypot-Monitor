@@ -29,7 +29,7 @@ echo "✅ Dashboard started tại http://localhost:8080"
 # Realtime Alert
 cd "$PROJECT_DIR/notifier"
 source venv/bin/activate
-nohup python3 -u realtime_alert.py > /tmp/realtime.log 2>&1 &
+sleep 3 && nohup python3 -u realtime_alert.py > /tmp/realtime.log 2>&1 &
 echo "✅ Realtime Alert started"
 
 # Daily Report
