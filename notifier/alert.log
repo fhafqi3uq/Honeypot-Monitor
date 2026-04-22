@@ -1,5 +1,0 @@
-nohup: ignoring input
-Traceback (most recent call last):
-  File "/home/dt/Desktop/Honeypot-Monitor/notifier/realtime_alert.py", line 5, in <module>
-    from pymongo import MongoClient
-ModuleNotFoundError: No module named 'pymongo'

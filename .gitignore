@@ -9,3 +9,8 @@ venv/
 *.pyc
 *.log
 parser/geoip/*.mmdb
+*.log
+notifier/cowrie-src
+honeypot/cowrie.json
+honeypot/cowrie-src/
+parser/geoip/*.mmdb
