@@ -4,19 +4,13 @@ Hệ thống giám sát và cảnh báo sớm tấn công mạng sử dụng Cow
 
 ## 📌 Tổng quan
 
-Honeypot Monitor là hệ thống thu thập, phân tích và cảnh báo các cuộc tấn công SSH theo thời gian thực. Hệ thống sử dụng Cowrie Honeypot để giả lập máy chủ SSH, ghi lại toàn bộ hành vi của kẻ tấn công và gửi cảnh báo qua Telegram.
-
-## 🏗️ Kiến trúc hệ thống
-Kẻ tấn công → Cowrie Honeypot → Log Parser → MongoDB
-↓
-Dashboard ← FastAPI ← Realtime Alert → Telegram
+Honeypot Monitor thu thập, phân tích và cảnh báo các cuộc tấn công SSH theo thời gian thực. Cowrie Honeypot giả lập máy chủ SSH, ghi lại hành vi kẻ tấn công và gửi cảnh báo qua Telegram.
 
 ## 🚀 Tính năng
 
 - ✅ Thu thập log tấn công SSH realtime
-- ✅ Phân tích và lưu trữ vào MongoDB
 - ✅ Dashboard web 5 trang: Dashboard, Tấn công, Thống kê, Bản đồ, Tìm kiếm IP
-- ✅ Cảnh báo Telegram ngay lập tức (<2 giây)
+- ✅ Cảnh báo Telegram ngay lập tức dưới 2 giây
 - ✅ Báo cáo tự động hàng ngày lúc 8h sáng
 - ✅ Lệnh bot Telegram: /stats /top /brute /help
 - ✅ Bản đồ thế giới hiển thị IP tấn công
@@ -47,30 +41,12 @@ Dashboard ← FastAPI ← Realtime Alert → Telegram
 
 ## ⚙️ Cài đặt
 
-### Yêu cầu
-- Ubuntu 20.04/22.04 hoặc WSL
-- Python 3.10+
-- Node.js + npm
-- MongoDB 6.0+
-
-### Clone và cài đặt
+**Yêu cầu:** Ubuntu 20.04/22.04, Python 3.10+, Node.js, MongoDB 6.0+
 
 ```bash
-# Clone repo
 git clone https://github.com/fhafqi3uq/Honeypot-Monitor.git
 cd Honeypot-Monitor
-
-# Tạo file .env
-cat > notifier/.env << 'ENV'
-TELEGRAM_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-ABUSEIPDB_KEY=your_abuseipdb_key
-ENV
-
-# Setup lần đầu
 bash setup.sh
-
-# Khởi động hệ thống
 bash start.sh
 ```
 
@@ -100,25 +76,26 @@ bash start.sh
 | /help | Danh sách lệnh |
 
 ## 📁 Cấu trúc thư mục
-Honeypot-Monitor/
-├── dashboard/          # Frontend 5 trang
-│   ├── index.html      # Dashboard chính
-│   ├── attacks.html    # Danh sách tấn công
-│   ├── stats.html      # Thống kê
-│   ├── map.html        # Bản đồ thế giới
-│   ├── search.html     # Tìm kiếm IP
-│   ├── css/style.css   # Giao diện
-│   └── js/             # JavaScript
-├── honeypot/           # Cowrie config
-├── notifier/           # Telegram Bot
-│   ├── bot.py          # Bot chính
-│   ├── realtime_alert.py # Cảnh báo realtime
-│   ├── daily_report.py # Báo cáo ngày
-│   └── telegram_commands.py # Lệnh bot
-├── parser/             # Backend API
-│   ├── main.py         # FastAPI endpoints
-│   ├── parser.py       # Log parser
-│   └── cleanup.py      # Auto cleanup
-├── healthcheck.sh      # Kiểm tra hệ thống
-├── setup.sh            # Cài đặt lần đầu
-└── start.sh            # Khởi động hệ thống
+
+    Honeypot-Monitor/
+    ├── dashboard/
+    │   ├── index.html
+    │   ├── attacks.html
+    │   ├── stats.html
+    │   ├── map.html
+    │   ├── search.html
+    │   ├── css/style.css
+    │   └── js/
+    ├── honeypot/
+    ├── notifier/
+    │   ├── bot.py
+    │   ├── realtime_alert.py
+    │   ├── daily_report.py
+    │   └── telegram_commands.py
+    ├── parser/
+    │   ├── main.py
+    │   ├── parser.py
+    │   └── cleanup.py
+    ├── healthcheck.sh
+    ├── setup.sh
+    └── start.sh
