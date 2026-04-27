@@ -93,9 +93,18 @@ def watch_log():
     print(f"👀 Theo dõi: {LOG_FILE}")
     print(f"📨 Telegram cảnh báo ngay khi có tấn công\n")
 
-    with open(LOG_FILE, "r") as f:
-        f.seek(0, 2)  # Nhảy đến cuối file
-        while True:
+    import os
+    current_inode = os.stat(LOG_FILE).st_ino
+    f = open(LOG_FILE, "r")
+    f.seek(0, 2)
+    while True:
+        try:
+            stat = os.stat(LOG_FILE)
+            if stat.st_ino != current_inode:
+                print("🔄 File log rotate - mở file mới...")
+                f.close()
+                f = open(LOG_FILE, "r")
+                current_inode = stat.st_ino
             line = f.readline()
             if not line:
                 time.sleep(1)
@@ -108,6 +117,9 @@ def watch_log():
                 process_event(raw)
             except json.JSONDecodeError:
                 continue
+        except Exception as e:
+            print(f"Lỗi: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     watch_log()
