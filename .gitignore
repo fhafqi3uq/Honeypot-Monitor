@@ -1,16 +1,22 @@
+# Python
+venv/
+*/venv/
+**/__pycache__/
+*.pyc
+
+# Logs
+*.log
+*.json.gz
+
+# Sensitive
 .env
-venv/
-*/venv/
-**/__pycache__/
-*.pyc
-venv/
-*/venv/
-**/__pycache__/
-*.pyc
-*.log
 parser/geoip/*.mmdb
-*.log
-notifier/cowrie-src
+
+# Cowrie runtime files (không cần push)
+honeypot/cowrie-src/var/
+honeypot/cowrie-src/cowrie-env/
+honeypot/cowrie-src/.tox/
+honeypot/cowrie-src/.git/
+
+# Không push file log Cowrie
 honeypot/cowrie.json
-honeypot/cowrie-src/
-parser/geoip/*.mmdb
