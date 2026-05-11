@@ -1,0 +1,9 @@
+# /etc/crontab: system-wide crontab
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# m h dom mon dow user  command
+*/5 * * * * root /usr/local/bin/backup.sh
+0   3 * * * root /opt/payment/daily_report.py
+0   * * * * www-data /var/www/html/cleanup.php
+# TODO: fix permissions on backup.sh - currently world-writable

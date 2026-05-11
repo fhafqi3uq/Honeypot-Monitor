@@ -1,0 +1,6 @@
+<?php
+define('DB_HOST', '10.0.0.5');
+define('DB_PASS', 'Sup3rS3cr3t_Prod!');
+define('SECRET_KEY', 'hs256_super_secret_key_prod_2026');
+define('STRIPE_KEY', 'sk_live_fakestripekey123456789');
+?>

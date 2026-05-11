@@ -1,0 +1,9 @@
+USER       PID %CPU %MEM COMMAND
+root         1  0.0  0.1 /sbin/init
+root       234  0.0  0.2 /usr/sbin/sshd -D
+root       456  0.1  0.3 mysqld --user=root --bind-address=0.0.0.0
+www-data   789  0.0  0.4 apache2 -k start
+root       890  0.0  0.1 redis-server 0.0.0.0:6379
+root      1234  0.0  0.2 mongod --bind_ip_all
+www-data  2345  0.0  0.3 python3 /opt/payment/process.py
+root      3456  0.0  0.1 cron
