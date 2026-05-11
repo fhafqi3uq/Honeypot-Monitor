@@ -1,0 +1,18 @@
+# Honeypot userdb - fake weak credentials to lure hackers
+root:x:password
+root:x:123456
+root:x:admin
+root:x:root
+root:x:toor
+root:x:pass123
+root:x:qwerty
+root:x:letmein
+admin:x:admin
+admin:x:admin123
+admin:x:password
+ubuntu:x:ubuntu
+ubuntu:x:123456
+user:x:user
+test:x:test
+guest:x:guest
+*:x:*
