@@ -10,7 +10,7 @@ venv/
 
 # Sensitive
 .env
-parser/geoip/*.mmdb
+*.mmdb
 
 # Cowrie runtime files (không cần push)
 honeypot/cowrie-src/var/
