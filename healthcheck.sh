@@ -2,6 +2,7 @@
 
 NOTIFIER_DIR=~/Honeypot-Monitor/notifier
 STATUS=0
+RECOVERED_SERVICES=""
 FAILED_SERVICES=""
 
 send_telegram() {
@@ -17,18 +18,35 @@ check_and_restart() {
     local name=$1
     local check_cmd=$2
     local restart_cmd=$3
-
     if eval "$check_cmd" > /dev/null 2>&1; then
         echo "✅ $name — đang chạy"
     else
         echo "❌ $name — DỪNG! Đang khởi động lại..."
+        send_telegram "❌ <b>DỊCH VỤ BỊ DỪNG</b>
+━━━━━━━━━━━━━━━
+⛔ $name đã ngừng hoạt động!
+🔄 Đang khởi động lại...
+⏰ $(date '+%d/%m/%Y %H:%M:%S')"
         eval "$restart_cmd"
+        sleep 3  # Chờ khởi động
+        
+        # Kiểm tra lại sau restart
+        if eval "$check_cmd" > /dev/null 2>&1; then
+            echo "✅ $name — đã khôi phục"
+            RECOVERED_SERVICES="$RECOVERED_SERVICES\n✅ $name"
+        else
+            echo "❌ $name — vẫn không lên được!"
+            send_telegram "🚨 <b>$name KHÔNG THỂ KHỞI ĐỘNG LẠI!</b>
+⏰ $(date '+%d/%m/%Y %H:%M:%S')"
+        fi
+        
         STATUS=1
         FAILED_SERVICES="$FAILED_SERVICES\n❌ $name"
     fi
 }
 
-# Kiểm tra từng service
+#
+ Kiểm tra từng service
 check_and_restart "MongoDB" \
     "systemctl is-active --quiet mongod" \
     "sudo systemctl start mongod"
@@ -60,6 +78,8 @@ if [ $STATUS -eq 1 ]; then
 Các dịch vụ bị dừng và đã khởi động lại:
 $(echo -e $FAILED_SERVICES)
 ━━━━━━━━━━━━━━━
+$([ -n "$RECOVERED_SERVICES" ] && echo -e "Đã khôi phục:$RECOVERED_SERVICES
+━━━━━━━━━━━━━━━")
 ⏰ $(date '+%d/%m/%Y %H:%M:%S')"
     echo "⚠️  Đã gửi cảnh báo Telegram!"
 else
