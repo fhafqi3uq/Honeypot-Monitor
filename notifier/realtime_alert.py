@@ -24,6 +24,28 @@ IMPORTANT_EVENTS = [
     "cowrie.session.closed",
 ]
 
+# Events that carry no attacker action by themselves but hold forensic
+# fields (client SSH fingerprint, ports) tied to a session started by an
+# earlier cowrie.session.connect line. Cached by session id and merged into
+# the IMPORTANT_EVENTS documents below instead of being stored on their own.
+SESSION_CACHE: dict[str, dict] = {}
+
+def update_session_cache(raw: dict):
+    eventid = raw.get("eventid", "")
+    session = raw.get("session")
+    if not session:
+        return
+    if eventid == "cowrie.session.connect":
+        cache = SESSION_CACHE.setdefault(session, {})
+        cache["src_port"] = raw.get("src_port")
+        cache["dst_port"] = raw.get("dst_port")
+    elif eventid == "cowrie.client.version":
+        SESSION_CACHE.setdefault(session, {})["client_version"] = raw.get("version")
+    elif eventid == "cowrie.client.kex":
+        cache = SESSION_CACHE.setdefault(session, {})
+        cache["hassh"] = raw.get("hassh")
+        cache["hasshAlgorithms"] = raw.get("hasshAlgorithms")
+
 def get_geo(ip: str) -> dict:
     if ip.startswith(("127.", "192.168.", "10.", "172.")):
         return {"country": "Local", "country_code": "LO", "city": "localhost", "latitude": 0.0, "longitude": 0.0}
@@ -44,32 +66,45 @@ def get_geo(ip: str) -> dict:
 
 def process_event(raw: dict):
     eventid = raw.get("eventid", "")
+    update_session_cache(raw)
     if eventid not in IMPORTANT_EVENTS:
         return
 
     ip  = raw.get("src_ip", "")
     geo = get_geo(ip)
+    session = raw.get("session")
+    cached = SESSION_CACHE.get(session, {})
 
     # Lưu vào MongoDB
     doc = {
-        "timestamp":    raw.get("timestamp"),
-        "src_ip":       ip,
-        "event":        eventid,
-        "username":     raw.get("username"),
-        "password":     raw.get("password"),
-        "command":      raw.get("input"),
-        "session":      raw.get("session"),
-        "sensor":       raw.get("sensor", "honeypot-01"),
-        "country":      geo["country"],
-        "country_code": geo["country_code"],
-        "city":         geo["city"],
-        "latitude":     geo["latitude"],
-        "longitude":    geo["longitude"],
-        "alerted":      True,
-        "created_at":   datetime.utcnow()
+        "timestamp":       raw.get("timestamp"),
+        "src_ip":          ip,
+        "src_port":        cached.get("src_port"),
+        "dst_port":        cached.get("dst_port"),
+        "event":           eventid,
+        "username":        raw.get("username"),
+        "password":        raw.get("password"),
+        "command":         raw.get("input"),
+        "session":         session,
+        "client_version":  cached.get("client_version"),
+        "hassh":           cached.get("hassh"),
+        "hasshAlgorithms": cached.get("hasshAlgorithms"),
+        "duration":        raw.get("duration") if eventid == "cowrie.session.closed" else None,
+        "sensor":          raw.get("sensor", "honeypot-01"),
+        "country":         geo["country"],
+        "country_code":    geo["country_code"],
+        "city":            geo["city"],
+        "latitude":        geo["latitude"],
+        "longitude":       geo["longitude"],
+        "alerted":         True,
+        "created_at":      datetime.utcnow()
     }
     collection.insert_one(doc)
     print(f"  ✓ {eventid:35} | {ip:15} | {geo['country']}")
+
+    # session closed -> nothing else will reference this session's cache
+    if eventid == "cowrie.session.closed":
+        SESSION_CACHE.pop(session, None)
 
     # Gửi Telegram ngay lập tức
     username = raw.get("username", "?")
