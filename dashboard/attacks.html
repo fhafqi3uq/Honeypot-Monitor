@@ -14,7 +14,7 @@
     .page-info{font-size:13px;color:#64748b}
   </style>
 </head>
-<body>
+<body style="visibility:hidden">
   <div class="sidebar" id="sidebar">
     <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
     <nav>
@@ -25,6 +25,7 @@
       <a href="search.html" class="nav-item">🔍 <span>Tìm kiếm IP</span></a>
     </nav>
     <div class="status">🟢 <span>Đang giám sát</span></div>
+    <button class="btn-logout" onclick="logout()">🚪 <span>Đăng xuất</span></button>
   </div>
 
   <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
@@ -95,7 +96,9 @@
   </div>
 
   <script src="js/data.js"></script>
+  <script src="js/auth.js"></script>
   <script>
+    requireAuth()
     const PAGE_SIZE  = 20
     let allAttacks   = []
     let filtered     = []
@@ -104,7 +107,7 @@
     async function loadAttackPage() {
       document.getElementById('attack-tbody').innerHTML =
         '<tr><td colspan="7" class="loading">Đang tải...</td></tr>'
-      const r = await fetch('http://localhost:8000/api/attacks?limit=500')
+      const r = await fetch(`${API_URL}/api/attacks?limit=500`, { credentials: 'include' })
       const d = await r.json()
       allAttacks = (d.data||[]).map(a=>({
         time:     a.timestamp ? a.timestamp.substring(11,19) : "--",

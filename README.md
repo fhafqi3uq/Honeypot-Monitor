@@ -50,21 +50,63 @@ bash setup.sh
 bash start.sh
 ```
 
+## 🔐 Đăng nhập Dashboard
+
+Dashboard và toàn bộ `/api/*` đều yêu cầu đăng nhập (JWT qua cookie httpOnly) - đây là dữ liệu honeypot (IP, username/password kẻ tấn công dùng, geo...), không nên để bất kỳ ai truy cập được dù server chỉ bind localhost.
+
+### Tạo tài khoản admin đầu tiên
+
+```bash
+cd parser
+source venv/bin/activate
+
+# 1. Tạo secret key cho JWT (bắt buộc, không có giá trị mặc định)
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_hex(32))"
+# dán chuỗi in ra vào .env: JWT_SECRET_KEY=<chuỗi vừa tạo>
+
+# 2. Tạo tài khoản (hỏi username/password qua prompt, không hardcode)
+python3 create_admin.py
+```
+
+Chạy lại `create_admin.py` bất cứ lúc nào để tạo thêm admin khác hoặc đổi mật khẩu (script sẽ hỏi xác nhận nếu username đã tồn tại).
+
+### Đăng nhập lần đầu
+
+1. `bash start.sh` (hoặc chạy riêng uvicorn + live-server)
+2. Mở `http://localhost:8080/login.html`, nhập username/password vừa tạo
+3. Đăng nhập thành công sẽ chuyển vào `index.html`; nút "🚪 Đăng xuất" ở sidebar mọi trang
+
+### Cơ chế hoạt động (tóm tắt)
+
+- **Password**: hash bằng bcrypt (`parser/auth.py`), không bao giờ lưu/so sánh plaintext.
+- **JWT**: `access_token` sống ngắn (90 phút) dùng cho mọi request; `refresh_token` sống dài (7 ngày), được lưu trong Mongo (`refresh_tokens`) để có thể thu hồi - đây chính là cơ chế "blacklist": logout hoặc mỗi lần gọi `/auth/refresh` sẽ xoá/luân chuyển (rotate) token cũ, nên token bị đánh cắp sau khi rotate sẽ không dùng lại được. Access token thì không tra DB (stateless) nên không có blacklist riêng - đổi lại là cửa sổ rủi ro nếu bị lộ chỉ tối đa 90 phút.
+- **Cookie**: cả hai token đều `httpOnly` (JS không đọc được → chống XSS đánh cắp token). Kèm theo 1 cookie `csrf_token` không-httpOnly cho cơ chế CSRF double-submit: mọi request có thay đổi trạng thái (logout, refresh) phải gửi kèm header `X-CSRF-Token` khớp với cookie này.
+- **Rate limit chống brute-force**: sai 5 lần trong 15 phút (theo cặp IP+username, lưu trong Mongo `login_attempts`) sẽ khoá 15 phút - tồn tại qua cả việc restart API. Thông báo lỗi đăng nhập luôn chung chung ("Sai thông tin đăng nhập"), không tiết lộ sai username hay sai password.
+- **Log đăng nhập**: mọi lần đăng nhập (thành công lẫn thất bại) được ghi vào Mongo `auth_log` (IP, username, thời gian, user-agent) - áp dụng đúng nguyên lý honeypot đang dạy: tự giám sát cửa trước của chính mình.
+- **Giới hạn kiến trúc cần biết**: dashboard được serve tĩnh qua `live-server` (không chạy Python), nên việc "chặn truy cập trang HTML" chỉ thực hiện được ở phía client (JS kiểm tra session, redirect sang `login.html` nếu chưa đăng nhập) - ranh giới bảo mật thật sự nằm ở FastAPI (mọi `/api/*` đều bị chặn ở backend nếu không có token hợp lệ), không phải ở file HTML tĩnh.
+
 ## 📊 API Endpoints
 
-| Endpoint | Mô tả |
-|---|---|
-| GET /api/stats | Thống kê tổng hợp |
-| GET /api/attacks | Danh sách tấn công |
-| GET /api/top-ips | Top IP tấn công |
-| GET /api/top-passwords | Top password bị thử |
-| GET /api/top-usernames | Top username bị thử |
-| GET /api/brute-force | Phát hiện brute-force |
-| GET /api/map-data | Dữ liệu bản đồ |
-| GET /api/search?ip= | Tìm kiếm theo IP |
-| GET /api/export/csv | Xuất CSV |
-| GET /api/stats/hourly | Thống kê theo giờ |
-| GET /api/stats/countries | Top quốc gia |
+Tất cả endpoint `/api/*` bên dưới đều yêu cầu đã đăng nhập (cookie `access_token` hợp lệ) - gọi trực tiếp mà không có cookie sẽ trả về `401`. Chỉ `GET /` là public (health check, không có dữ liệu nhạy cảm).
+
+| Endpoint | Mô tả | Yêu cầu đăng nhập |
+|---|---|---|
+| POST /auth/login | Đăng nhập, trả JWT qua cookie | Không |
+| POST /auth/logout | Đăng xuất, thu hồi refresh token | Có (+ CSRF) |
+| POST /auth/refresh | Cấp access token mới từ refresh token | Có (+ CSRF) |
+| GET /auth/me | Kiểm tra session hiện tại | Có |
+| GET /api/stats | Thống kê tổng hợp | Có |
+| GET /api/attacks | Danh sách tấn công | Có |
+| GET /api/top-ips | Top IP tấn công | Có |
+| GET /api/top-passwords | Top password bị thử | Có |
+| GET /api/top-usernames | Top username bị thử | Có |
+| GET /api/brute-force | Phát hiện brute-force | Có |
+| GET /api/map-data | Dữ liệu bản đồ | Có |
+| GET /api/search?ip= | Tìm kiếm theo IP | Có |
+| GET /api/export/csv | Xuất CSV | Có |
+| GET /api/stats/hourly | Thống kê theo giờ | Có |
+| GET /api/stats/countries | Top quốc gia | Có |
 
 ## 🤖 Lệnh Telegram Bot
 
@@ -84,8 +126,9 @@ bash start.sh
     │   ├── stats.html
     │   ├── map.html
     │   ├── search.html
+    │   ├── login.html
     │   ├── css/style.css
-    │   └── js/
+    │   └── js/ (data.js, auth.js, charts.js, app.js)
     ├── honeypot/
     ├── notifier/
     │   ├── bot.py
@@ -94,6 +137,8 @@ bash start.sh
     │   └── telegram_commands.py
     ├── parser/
     │   ├── main.py
+    │   ├── auth.py
+    │   ├── create_admin.py
     │   ├── parser.py
     │   └── cleanup.py
     ├── healthcheck.sh

@@ -11,7 +11,7 @@
     #map { height: 500px; border-radius: 12px; }
   </style>
 </head>
-<body>
+<body style="visibility:hidden">
   <div class="sidebar" id="sidebar">
     <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
     <nav>
@@ -21,6 +21,7 @@
       <a href="map.html" class="nav-item active">🗺️ <span>Bản đồ</span></a>
     </nav>
     <div class="status">🟢 <span>Đang giám sát</span></div>
+    <button class="btn-logout" onclick="logout()">🚪 <span>Đăng xuất</span></button>
   </div>
 
   <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
@@ -86,7 +87,7 @@
 
     async function loadMap() {
       try {
-        const res  = await fetch(`${API_URL}/api/map-data`)
+        const res  = await fetch(`${API_URL}/api/map-data`, { credentials: 'include' })
         const data = await res.json()
         const ips  = data.data || []
 
@@ -144,5 +145,7 @@
     loadMap()
     setInterval(loadMap, 30000)
   </script>
+  <script src="js/auth.js"></script>
+  <script>requireAuth()</script>
 </body>
 </html>

@@ -6,7 +6,7 @@
   <title>Tìm kiếm IP — Honeypot</title>
   <link rel="stylesheet" href="css/style.css"/>
 </head>
-<body>
+<body style="visibility:hidden">
   <div class="sidebar" id="sidebar">
     <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
     <nav>
@@ -17,6 +17,7 @@
       <a href="search.html" class="nav-item active">🔍 <span>Tìm kiếm IP</span></a>
     </nav>
     <div class="status">🟢 <span>Đang giám sát</span></div>
+    <button class="btn-logout" onclick="logout()">🚪 <span>Đăng xuất</span></button>
   </div>
 
   <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
@@ -115,7 +116,7 @@
       document.getElementById('empty-state').style.display    = 'none'
 
       try {
-        const res  = await fetch(`${API_URL}/api/search?ip=${encodeURIComponent(ip)}`)
+        const res  = await fetch(`${API_URL}/api/search?ip=${encodeURIComponent(ip)}`, { credentials: 'include' })
         const data = await res.json()
         const list = data.data || []
 
@@ -169,5 +170,7 @@
       document.getElementById('sidebar').classList.toggle('open')
     }
   </script>
+  <script src="js/auth.js"></script>
+  <script>requireAuth()</script>
 </body>
 </html>

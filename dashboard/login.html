@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Đăng nhập — Honeypot Monitor</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <style>
+    body{align-items:center;justify-content:center}
+    .login-card{background:#1e2130;border-radius:12px;padding:32px;width:100%;max-width:360px;margin:16px}
+    .login-logo{font-size:24px;font-weight:700;text-align:center;margin-bottom:4px}
+    .login-sub{font-size:13px;color:#64748b;text-align:center;margin-bottom:24px}
+    .login-field{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+    .login-field label{font-size:12px;color:#94a3b8}
+    .login-field input{background:#0f1117;border:1px solid #2d3748;color:#e2e8f0;padding:10px 12px;border-radius:8px;font-size:14px;outline:none;transition:border .2s}
+    .login-field input:focus{border-color:#3b82f6}
+    .btn-login{width:100%;background:#3b82f6;color:#fff;border:none;padding:11px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:background .2s}
+    .btn-login:hover{background:#2563eb}
+    .btn-login:disabled{background:#2d3748;cursor:not-allowed}
+    .login-error{background:#3a1e1e;color:#fca5a5;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:16px;display:none}
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-logo">🍯 Honeypot Monitor</div>
+    <div class="login-sub">Đăng nhập để xem dashboard</div>
+
+    <div class="login-error" id="login-error"></div>
+
+    <form id="login-form">
+      <div class="login-field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required/>
+      </div>
+      <div class="login-field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required/>
+      </div>
+      <button type="submit" class="btn-login" id="btn-login">Đăng nhập</button>
+    </form>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script>
+    const form      = document.getElementById('login-form')
+    const errorBox  = document.getElementById('login-error')
+    const btn       = document.getElementById('btn-login')
+
+    function showError(message) {
+      errorBox.textContent = message
+      errorBox.style.display = 'block'
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      errorBox.style.display = 'none'
+      btn.disabled = true
+      btn.textContent = 'Đang đăng nhập...'
+
+      const username = document.getElementById('username').value.trim()
+      const password = document.getElementById('password').value
+
+      try {
+        const res = await fetch(`${API_URL}/auth/login`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        })
+        if (res.ok) {
+          window.location.href = 'index.html'
+          return
+        }
+        const data = await res.json().catch(() => ({}))
+        showError(data.detail || 'Đăng nhập thất bại. Vui lòng thử lại.')
+      } catch {
+        showError('Không kết nối được tới máy chủ. Vui lòng thử lại.')
+      } finally {
+        btn.disabled = false
+        btn.textContent = 'Đăng nhập'
+      }
+    })
+  </script>
+</body>
+</html>
