@@ -62,8 +62,12 @@ MAX_LOGIN_ATTEMPTS = 5
 LOGIN_ATTEMPT_WINDOW_MINUTES = 15
 LOCKOUT_MINUTES = 15
 
-_client = MongoClient("mongodb://localhost:27017")
-_db = _client["honeypot"]
+# bcrypt hard limit: it raises ValueError for inputs over 72 bytes rather
+# than silently truncating (older bcrypt releases used to truncate).
+MAX_PASSWORD_BYTES = 72
+
+_client = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+_db = _client[os.getenv("DB_NAME", "honeypot")]
 users_col = _db["users"]
 refresh_tokens_col = _db["refresh_tokens"]
 login_attempts_col = _db["login_attempts"]
@@ -82,11 +86,17 @@ _DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing", bcrypt.gensalt())
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_PASSWORD_BYTES:
+        raise ValueError(f"Password must be at most {MAX_PASSWORD_BYTES} bytes")
+    return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_PASSWORD_BYTES:
+        return False
+    return bcrypt.checkpw(password_bytes, password_hash.encode("utf-8"))
 
 
 def _now() -> datetime:
@@ -224,10 +234,17 @@ def client_ip(request: Request) -> str:
 def authenticate_user(username: str, password: str) -> bool:
     """Constant-time-ish check: always runs a bcrypt comparison even for a
     nonexistent username, against the dummy hash, so response timing
-    doesn't reveal whether the username exists."""
+    doesn't reveal whether the username exists. An over-length password
+    (bcrypt rejects anything over 72 bytes) fails the same way - a wrong
+    password, no crash, same generic error message."""
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > MAX_PASSWORD_BYTES:
+        bcrypt.checkpw(b"dummy-password-for-timing", _DUMMY_HASH)
+        return False
+
     user = users_col.find_one({"username": username})
     if not user:
-        bcrypt.checkpw(password.encode("utf-8"), _DUMMY_HASH)
+        bcrypt.checkpw(password_bytes, _DUMMY_HASH)
         return False
     return verify_password(password, user["password_hash"])
 
