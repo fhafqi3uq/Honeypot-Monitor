@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest==9.1.1
+mongomock==4.3.0
+# geoip2 is a parser/ dependency, not a notifier/ one - only needed here
+# because test_alerting.py's AL-11 cross-checks log_watcher.py's output
+# against realtime_alert.py's, so it must import both.
+geoip2==4.8.0

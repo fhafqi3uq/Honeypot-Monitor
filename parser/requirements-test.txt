@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest==9.1.1
+mongomock==4.3.0
+httpx==0.28.1
+playwright==1.61.0
+# after installing: `python -m playwright install chromium`
+paramiko==5.0.0
