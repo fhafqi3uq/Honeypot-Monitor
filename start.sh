@@ -15,16 +15,18 @@ source cowrie-env/bin/activate
 cowrie-env/bin/cowrie start
 echo "✅ Cowrie started"
 
-# FastAPI
+# FastAPI (bind localhost only — API không xác thực, không được lộ ra cùng
+# interface public với honeypot, nếu không attacker port-scan sẽ thấy ngay
+# đây là hệ thống có giám sát)
 cd "$PROJECT_DIR/parser"
 source venv/bin/activate
-nohup uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/api.log 2>&1 &
-echo "✅ FastAPI started tại http://localhost:8000"
+nohup uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
+echo "✅ FastAPI started tại http://localhost:8000 (chỉ nội bộ)"
 
-# Dashboard
+# Dashboard (bind localhost only — cùng lý do như FastAPI ở trên)
 cd "$PROJECT_DIR/dashboard"
-nohup live-server . --port=8080 > /tmp/dashboard.log 2>&1 &
-echo "✅ Dashboard started tại http://localhost:8080"
+nohup live-server . --port=8080 --host=127.0.0.1 > /tmp/dashboard.log 2>&1 &
+echo "✅ Dashboard started tại http://localhost:8080 (chỉ nội bộ)"
 
 # Realtime Alert
 cd "$PROJECT_DIR/notifier"
