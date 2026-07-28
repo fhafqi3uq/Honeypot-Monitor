@@ -12,8 +12,8 @@ LOG_FILE = os.path.expanduser(
 )
 
 # Kết nối MongoDB
-client     = MongoClient("mongodb://localhost:27017")
-db         = client["honeypot"]
+client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
 
 IMPORTANT_EVENTS = [

@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pymongo import MongoClient
 from geoip_lookup import get_geo
 
-client     = MongoClient("mongodb://localhost:27017")
-db         = client["honeypot"]
+client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
 
 IMPORTANT_EVENTS = [

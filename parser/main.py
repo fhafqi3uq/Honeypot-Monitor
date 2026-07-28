@@ -30,8 +30,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client     = MongoClient("mongodb://localhost:27017")
-db         = client["honeypot"]
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "honeypot")
+client     = MongoClient(MONGO_URL)
+db         = client[DB_NAME]
 collection = db["attacks"]
 
 collection.create_index([("timestamp", -1)])
