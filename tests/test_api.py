@@ -270,6 +270,62 @@ class TestConcurrency:
 
 
 # ---------------------------------------------------------------------------
+# Generic per-IP rate limit on every /api/* endpoint (auth.check_api_rate_limit)
+# ---------------------------------------------------------------------------
+class TestApiRateLimit:
+    def test_api13_exceeding_the_limit_returns_429(self, fresh_app, monkeypatch):
+        client, main, auth = _login(fresh_app)
+        monkeypatch.setattr(auth, "API_RATE_LIMIT_MAX_REQUESTS", 3)
+
+        statuses = [client.get("/api/stats").status_code for _ in range(4)]
+
+        assert statuses == [200, 200, 200, 429]
+
+    def test_api13_limit_is_shared_across_different_api_endpoints(self, fresh_app, monkeypatch):
+        """The rate limit is per-IP (applied at the api_router level), not
+        per-route - hammering one endpoint counts against the budget for
+        all of them."""
+        client, main, auth = _login(fresh_app)
+        monkeypatch.setattr(auth, "API_RATE_LIMIT_MAX_REQUESTS", 2)
+
+        assert client.get("/api/stats").status_code == 200
+        assert client.get("/api/attacks").status_code == 200
+        assert client.get("/api/top-ips").status_code == 429
+
+    def test_api13_login_endpoint_is_not_subject_to_the_api_rate_limit(self, fresh_app, monkeypatch):
+        """/auth/login isn't registered on api_router, so exhausting the
+        generic API rate limit must not lock a user out of logging in -
+        it has its own dedicated, stricter per-(ip,username) lockout
+        (auth.check_rate_limit / TestBruteForceLockout)."""
+        client, main, auth = fresh_app
+        auth.users_col.insert_one(
+            {"username": "admin", "password_hash": auth.hash_password("Pass123!Aa"), "created_at": auth._now()}
+        )
+        monkeypatch.setattr(auth, "API_RATE_LIMIT_MAX_REQUESTS", 0)
+
+        r = client.post("/auth/login", json={"username": "admin", "password": "Pass123!Aa"})
+
+        assert r.status_code == 200
+
+    def test_api13_concurrent_requests_never_exceed_the_limit(self, fresh_app, monkeypatch):
+        """check_api_rate_limit uses find_one_and_update's atomic $inc
+        (unlike record_failed_attempt's read-then-write, which
+        test_api10 above documents as racy) - under concurrency, no more
+        than API_RATE_LIMIT_MAX_REQUESTS calls should ever succeed."""
+        client, main, auth = _login(fresh_app)
+        monkeypatch.setattr(auth, "API_RATE_LIMIT_MAX_REQUESTS", 10)
+
+        def call(_):
+            return client.get("/api/stats").status_code
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            statuses = list(pool.map(call, range(20)))
+
+        assert statuses.count(200) == 10
+        assert statuses.count(429) == 10
+
+
+# ---------------------------------------------------------------------------
 # API-11: Content-Type handling
 # ---------------------------------------------------------------------------
 class TestContentType:

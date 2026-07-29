@@ -42,7 +42,7 @@ import bcrypt
 import jwt
 from dotenv import load_dotenv
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 
 load_dotenv()
 
@@ -61,6 +61,15 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_ATTEMPT_WINDOW_MINUTES = 15
 LOCKOUT_MINUTES = 15
+
+# Generic per-IP rate limit applied to every /api/* endpoint (separate from
+# the /auth/login-specific lockout above, which is keyed by ip+username and
+# only guards credential-guessing). Deliberately generous - it exists to
+# stop someone hammering the API (e.g. repeatedly calling
+# /api/export/csv), not to throttle normal dashboard usage (a page load
+# fires a handful of concurrent fetches, refreshed every 30s).
+API_RATE_LIMIT_MAX_REQUESTS = 100
+API_RATE_LIMIT_WINDOW_SECONDS = 60
 
 # "admin" can do everything; "viewer" is read-only (see require_admin() below
 # for exactly which endpoints that blocks). Accounts created before roles
@@ -81,11 +90,14 @@ users_col = _db["users"]
 refresh_tokens_col = _db["refresh_tokens"]
 login_attempts_col = _db["login_attempts"]
 auth_log_col = _db["auth_log"]
+api_rate_limits_col = _db["api_rate_limits"]
 
 users_col.create_index("username", unique=True)
 refresh_tokens_col.create_index("jti", unique=True)
 refresh_tokens_col.create_index("expires_at", expireAfterSeconds=0)
 login_attempts_col.create_index("key", unique=True)
+api_rate_limits_col.create_index("key", unique=True)
+api_rate_limits_col.create_index("expires_at", expireAfterSeconds=0)
 
 # A fixed dummy hash to run bcrypt.checkpw against when the username doesn't
 # exist, so a login attempt for a nonexistent user takes roughly the same
@@ -250,6 +262,38 @@ def log_auth_event(ip: str, username: str, success: bool, user_agent: str = "") 
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def check_api_rate_limit(request: Request) -> None:
+    """FastAPI dependency for every /api/* endpoint: a generic per-IP
+    fixed-window request cap, independent of the /auth/login-specific
+    lockout above. Uses find_one_and_update's atomic $inc (unlike
+    record_failed_attempt's read-then-write above) so concurrent requests
+    in the same window can't race past the limit; the window is bucketed
+    by floor(now / API_RATE_LIMIT_WINDOW_SECONDS) so each window is a
+    fresh document rather than needing a reset step, and the TTL index on
+    api_rate_limits_col cleans up old buckets automatically."""
+    ip = client_ip(request)
+    now = _now()
+    # time.time(), not now.timestamp() - _now() is a naive UTC datetime,
+    # and .timestamp() on a naive datetime assumes the LOCAL timezone,
+    # which would shift bucket boundaries by the server's UTC offset.
+    bucket = int(time.time() // API_RATE_LIMIT_WINDOW_SECONDS)
+    key = f"{ip}|{bucket}"
+    doc = api_rate_limits_col.find_one_and_update(
+        {"key": key},
+        {
+            "$inc": {"count": 1},
+            "$setOnInsert": {"expires_at": now + timedelta(seconds=API_RATE_LIMIT_WINDOW_SECONDS * 2)},
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    if doc["count"] > API_RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Quá nhiều yêu cầu, vui lòng thử lại sau ít phút.",
+        )
 
 
 def authenticate_user(username: str, password: str) -> bool:

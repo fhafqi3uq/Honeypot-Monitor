@@ -1,6 +1,6 @@
 import os
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -18,6 +18,13 @@ app = FastAPI(
     description="Hệ thống phân tích và thống kê log tấn công từ Cowrie",
     version="2.0.0"
 )
+
+# Every /api/* route below is registered on this router instead of directly
+# on `app` so auth.check_api_rate_limit runs once per request for all of
+# them (a generic per-IP cap, on top of whatever per-route auth dependency
+# it also has) without repeating `Depends(...)` on every single endpoint -
+# a new /api/* endpoint added later gets rate-limited automatically.
+api_router = APIRouter(prefix="/api", dependencies=[Depends(auth.check_api_rate_limit)])
 
 # Dashboard is a separate static origin (live-server on :8080). Cookies are
 # httpOnly, so the browser must be told the API trusts that exact origin
@@ -161,7 +168,7 @@ def me(user: str = Depends(auth.get_current_user)):
 def root():
     return {"message": "Honeypot API V2 đang chạy!", "status": "ok"}
 
-@app.get("/api/stats")
+@api_router.get("/stats")
 def get_stats(user: str = Depends(auth.get_current_user)):
     return {
         "total":      collection.count_documents({}),
@@ -171,7 +178,7 @@ def get_stats(user: str = Depends(auth.get_current_user)):
         "unique_ips": len(collection.distinct("src_ip")),
     }
 
-@app.get("/api/attacks")
+@api_router.get("/attacks")
 def get_attacks(
     limit: int = 50,
     start_date: Optional[str] = Query(None),
@@ -188,7 +195,7 @@ def get_attacks(
     attacks = list(collection.find(query, {"_id": 0}).sort("timestamp", -1).limit(limit))
     return {"status": "success", "total_returned": len(attacks), "data": attacks}
 
-@app.get("/api/top-ips")
+@api_router.get("/top-ips")
 def get_top_ips(limit: int = 10, user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$group":  {"_id": "$src_ip", "count": {"$sum": 1}}},
@@ -198,7 +205,7 @@ def get_top_ips(limit: int = 10, user: str = Depends(auth.get_current_user)):
     ]
     return {"data": list(collection.aggregate(pipeline))}
 
-@app.get("/api/top-passwords")
+@api_router.get("/top-passwords")
 def get_top_passwords(limit: int = 10, user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$match":  {"password": {"$ne": None}}},
@@ -209,7 +216,7 @@ def get_top_passwords(limit: int = 10, user: str = Depends(auth.get_current_user
     ]
     return {"data": list(collection.aggregate(pipeline))}
 
-@app.get("/api/top-usernames")
+@api_router.get("/top-usernames")
 def get_top_usernames(limit: int = 10, user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$match":  {"username": {"$ne": None}}},
@@ -220,7 +227,7 @@ def get_top_usernames(limit: int = 10, user: str = Depends(auth.get_current_user
     ]
     return {"data": list(collection.aggregate(pipeline))}
 
-@app.get("/api/alerts/pending")
+@api_router.get("/alerts/pending")
 def get_pending_alerts(user: str = Depends(auth.require_admin)):
     # require_admin, not get_current_user: this GET has a write side-effect
     # below (marks matched docs alerted=True, consuming the queue) - a
@@ -236,7 +243,7 @@ def get_pending_alerts(user: str = Depends(auth.require_admin)):
         collection.update_many({"alerted": False}, {"$set": {"alerted": True}})
     return {"data": alerts}
 
-@app.get("/api/map-data")
+@api_router.get("/map-data")
 def get_map_data(user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$match": {"latitude": {"$ne": 0}, "longitude": {"$ne": 0}}},
@@ -256,7 +263,7 @@ def get_map_data(user: str = Depends(auth.get_current_user)):
     ]
     return {"data": list(collection.aggregate(pipeline))}
 
-@app.get("/api/stats/hourly")
+@api_router.get("/stats/hourly")
 def get_hourly_stats(limit: int = 24, user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$group": {"_id": {"$substr": ["$timestamp", 0, 13]}, "count": {"$sum": 1}}},
@@ -268,7 +275,7 @@ def get_hourly_stats(limit: int = 24, user: str = Depends(auth.get_current_user)
     results.reverse()
     return {"status": "success", "data": results}
 
-@app.get("/api/stats/countries")
+@api_router.get("/stats/countries")
 def get_top_countries(limit: int = 10, user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$match": {"country": {"$ne": None, "$ne": "Local"}}},
@@ -279,7 +286,7 @@ def get_top_countries(limit: int = 10, user: str = Depends(auth.get_current_user
     ]
     return {"data": list(collection.aggregate(pipeline))}
 
-@app.get("/api/brute-force")
+@api_router.get("/brute-force")
 def get_brute_force(limit: int = 10, user: str = Depends(auth.get_current_user)):
     pipeline = [
         {"$match": {"event": "cowrie.login.failed"}},
@@ -297,7 +304,7 @@ def get_brute_force(limit: int = 10, user: str = Depends(auth.get_current_user))
     ]
     return {"data": list(collection.aggregate(pipeline))}
 
-@app.get("/api/search")
+@api_router.get("/search")
 def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):
     attacks = list(collection.find({"src_ip": ip}, {"_id": 0}).sort("timestamp", -1).limit(100))
     return {"ip": ip, "total": len(attacks), "data": attacks}
@@ -319,7 +326,7 @@ def _csv_safe(value) -> str:
     return text
 
 
-@app.get("/api/export/csv")
+@api_router.get("/export/csv")
 def export_csv(user: str = Depends(auth.require_admin)):
     logger.info("CSV export requested by '%s'", user, extra={"username": user, "endpoint": "/api/export/csv"})
     data   = list(collection.find({}, {"_id": 0}).sort("timestamp", -1).limit(1000))
@@ -335,3 +342,6 @@ def export_csv(user: str = Depends(auth.require_admin)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=honeypot_attacks.csv"}
     )
+
+
+app.include_router(api_router)
