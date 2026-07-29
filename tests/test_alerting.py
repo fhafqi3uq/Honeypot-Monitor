@@ -360,6 +360,63 @@ class TestTelegramCommands:
         assert "203.0.113.7" in result
         assert "root/toor" in result
 
+    def test_al12_get_recent_brute_escapes_html_injection(self, fresh_module):
+        telegram_commands = fresh_module("telegram_commands")
+        telegram_commands.col.insert_one(
+            {
+                "event": "cowrie.login.failed",
+                "src_ip": "203.0.113.7",
+                "username": "<img src=x onerror=alert(1)>",
+                "password": "<script>alert(1)</script>",
+                "created_at": datetime.utcnow(),
+            }
+        )
+
+        result = telegram_commands.get_recent_brute()
+
+        assert "<img" not in result
+        assert "<script>" not in result
+        assert "&lt;img src=x onerror=alert(1)&gt;" in result
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in result
+
+    def test_al12_get_top_ips_escapes_html_injection(self, fresh_module):
+        telegram_commands = fresh_module("telegram_commands")
+        telegram_commands.col.insert_one({"src_ip": "<script>alert(1)</script>"})
+
+        result = telegram_commands.get_top_ips()
+
+        assert "<script>" not in result
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in result
+
+    def test_al12_process_update_rejects_command_from_unauthorized_chat(self, fresh_module, monkeypatch):
+        """Regression test for a fixed gap: process_update() used to
+        dispatch ANY incoming Telegram message regardless of which chat it
+        came from - so anyone who could message this bot could pull
+        /stats, /top, or /brute (including plaintext attacker-tried
+        passwords). It must now only respond to the configured CHAT_ID."""
+        telegram_commands = fresh_module("telegram_commands")
+        monkeypatch.setattr(telegram_commands, "CHAT_ID", "111111")
+        mock_send = Mock()
+        monkeypatch.setattr(telegram_commands, "send_message", mock_send)
+
+        telegram_commands.process_update(
+            {"update_id": 1, "message": {"chat": {"id": 999999}, "text": "/brute"}}
+        )
+
+        mock_send.assert_not_called()
+
+    def test_al12_process_update_accepts_command_from_authorized_chat(self, fresh_module, monkeypatch):
+        telegram_commands = fresh_module("telegram_commands")
+        monkeypatch.setattr(telegram_commands, "CHAT_ID", "111111")
+        mock_send = Mock()
+        monkeypatch.setattr(telegram_commands, "send_message", mock_send)
+
+        telegram_commands.process_update(
+            {"update_id": 1, "message": {"chat": {"id": 111111}, "text": "/stats"}}
+        )
+
+        mock_send.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # AL-11: schema drift between log_watcher.py and realtime_alert.py
