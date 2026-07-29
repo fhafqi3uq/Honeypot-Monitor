@@ -302,6 +302,23 @@ def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):
     attacks = list(collection.find({"src_ip": ip}, {"_id": 0}).sort("timestamp", -1).limit(100))
     return {"ip": ip, "total": len(attacks), "data": attacks}
 
+# Excel/Google Sheets/LibreOffice treat a cell starting with any of these
+# as a formula to evaluate on open. Every field below comes straight from
+# an attacker-controlled Cowrie event (username/password/command) or is
+# otherwise untrusted, so a crafted value like `=cmd|'/c calc'!A1` in a
+# username would execute when the admin opens the exported CSV - the
+# classic "CSV/Formula Injection" (OWASP). Prefixing with a single quote
+# neutralizes it as a formula while leaving the value readable as text.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value) -> str:
+    text = "" if value is None else str(value)
+    if text and text[0] in _CSV_FORMULA_PREFIXES:
+        return "'" + text
+    return text
+
+
 @app.get("/api/export/csv")
 def export_csv(user: str = Depends(auth.require_admin)):
     logger.info("CSV export requested by '%s'", user, extra={"username": user, "endpoint": "/api/export/csv"})
@@ -311,7 +328,7 @@ def export_csv(user: str = Depends(auth.require_admin)):
         writer = csv.DictWriter(output, fieldnames=["timestamp","src_ip","event","username","password","command","country","city"])
         writer.writeheader()
         for a in data:
-            writer.writerow({k: a.get(k,"") for k in ["timestamp","src_ip","event","username","password","command","country","city"]})
+            writer.writerow({k: _csv_safe(a.get(k, "")) for k in ["timestamp","src_ip","event","username","password","command","country","city"]})
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),

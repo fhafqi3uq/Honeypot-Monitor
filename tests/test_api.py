@@ -180,6 +180,40 @@ class TestCSVExport:
         assert len(rows) == 1
         assert rows[0]["command"] == tricky_command
 
+    @pytest.mark.parametrize("payload", [
+        "=cmd|'/c calc'!A1",
+        "+1+1",
+        "-2+3",
+        "@SUM(1,1)",
+    ])
+    def test_api12_formula_payload_in_username_is_neutralized(self, fresh_app, payload):
+        """OWASP CSV/Formula Injection: a cell starting with =, +, -, or @
+        is evaluated as a formula by Excel/Sheets/LibreOffice when the
+        exported file is opened. export_csv() must prefix any such value
+        with a single quote so it's treated as plain text instead."""
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_one(
+            {
+                "timestamp": "2026-01-01T00:00:00",
+                "src_ip": "1.2.3.4",
+                "event": "cowrie.login.failed",
+                "username": payload,
+                "password": "toor",
+                "command": None,
+                "country": "Unknown",
+                "city": "Unknown",
+            }
+        )
+
+        r = client.get("/api/export/csv")
+
+        assert r.status_code == 200
+        # The raw CSV text must never contain the payload at the start of
+        # a field - only prefixed with a leading single quote.
+        assert f",{payload}," not in r.text
+        rows = list(csv.DictReader(io.StringIO(r.text)))
+        assert rows[0]["username"] == "'" + payload
+
 
 # ---------------------------------------------------------------------------
 # API-09, API-10: concurrent load
