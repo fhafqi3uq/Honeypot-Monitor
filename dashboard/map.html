@@ -73,6 +73,8 @@
     </div>
   </div>
 
+  <script src="js/escape.js"></script>
+  <script src="js/auth.js"></script>
   <script>
     const API_URL = "http://localhost:8000"
     let map = null
@@ -87,7 +89,7 @@
 
     async function loadMap() {
       try {
-        const res  = await fetch(`${API_URL}/api/map-data`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/map-data`)
         const data = await res.json()
         const ips  = data.data || []
 
@@ -114,7 +116,7 @@
           })
           const marker = L.marker([d.latitude, d.longitude], { icon })
             .addTo(map)
-            .bindPopup(`<b>${d.ip}</b><br/>📍 ${d.city}, ${d.country}<br/>🔢 ${d.count} lần`)
+            .bindPopup(`<b>${escapeHtml(d.ip)}</b><br/>📍 ${escapeHtml(d.city)}, ${escapeHtml(d.country)}<br/>🔢 ${escapeHtml(d.count)} lần`)
           markers.push(marker)
         })
 
@@ -123,10 +125,10 @@
           .map((d, i) => `
             <tr>
               <td style="color:#64748b">${i+1}</td>
-              <td style="font-family:monospace;color:#60a5fa">${d.ip}</td>
-              <td>${d.country || '—'}</td>
-              <td style="color:#94a3b8">${d.city || '—'}</td>
-              <td><span class="badge failed">${d.count} lần</span></td>
+              <td style="font-family:monospace;color:#60a5fa">${escapeHtml(d.ip)}</td>
+              <td>${escapeHtml(d.country)||'—'}</td>
+              <td style="color:#94a3b8">${escapeHtml(d.city)||'—'}</td>
+              <td><span class="badge failed">${escapeHtml(d.count)} lần</span></td>
             </tr>
           `).join('') || '<tr><td colspan="5" class="loading">Chưa có IP từ internet</td></tr>'
 
@@ -145,7 +147,6 @@
     loadMap()
     setInterval(loadMap, 30000)
   </script>
-  <script src="js/auth.js"></script>
   <script>requireAuth()</script>
 </body>
 </html>

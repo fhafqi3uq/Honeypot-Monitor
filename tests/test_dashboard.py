@@ -16,7 +16,6 @@ from datetime import datetime
 
 import bcrypt
 import pytest
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect
 
 PAGES = ["index.html", "attacks.html", "stats.html", "map.html", "search.html"]
@@ -144,19 +143,25 @@ class TestLargeDataset:
 # DB-05: stored XSS via honeypot-controlled fields (username/password/command)
 # ---------------------------------------------------------------------------
 class TestStoredXSS:
-    def test_db05_xss_payload_in_username_executes_in_browser(self, page, live_stack_clean):
+    def test_db05_xss_payload_in_username_does_not_execute(self, page, live_stack_clean):
         """
-        THE most important finding in this whole test plan: app.js's
-        updateTable() (and attacks.html's equivalent) inserts a.username /
-        a.password / a.command straight into innerHTML via a template
-        string, with no escaping. An attacker who gets the honeypot to
-        record a username/password/command containing a script tag gets
-        that script executed in the logged-in admin's browser the next
-        time they open the dashboard - and since the csrf_token cookie is
-        deliberately NOT httpOnly (the double-submit CSRF design requires
-        JS to read it), injected script can read it and forge a valid
-        CSRF-protected request as the admin, e.g. to /auth/logout or any
-        future mutating endpoint.
+        Regression test for a real vulnerability found and fixed in this
+        project: app.js's updateTable() (and the equivalent render
+        functions in attacks.html/search.html/stats.html/map.html) used to
+        insert a.username/a.password/a.command/etc. straight into
+        innerHTML via a template string, with no escaping. An attacker who
+        got the honeypot to record a username/password/command containing
+        a script tag got that script executed in the logged-in admin's
+        browser the next time the dashboard rendered it - and since the
+        csrf_token cookie is deliberately not httpOnly (the double-submit
+        CSRF design needs JS to read it), injected script could forge a
+        valid CSRF-protected request as the admin too.
+
+        Fixed via a shared `escapeHtml()` helper (dashboard/js/escape.js)
+        applied to every attacker-controlled field before it's
+        interpolated into an HTML template. This test proves the payload
+        no longer executes AND that it's still shown to the admin as
+        inert, escaped text (not silently dropped).
         """
         _, dashboard_url, test_db = live_stack_clean
         username, password = _seed_user(test_db)
@@ -172,30 +177,78 @@ class TestStoredXSS:
         )
 
         _login_via_ui(page, dashboard_url, username, password)
+        expect(page.locator("#attack-tbody tr").first).to_be_visible()
 
-        try:
-            page.wait_for_function("window.__xss_fired === true", timeout=5000)
-        except PlaywrightTimeoutError:
-            pytest.fail(
-                "XSS payload in username did NOT execute - if the dashboard now "
-                "escapes attacker-controlled fields, update/remove this test "
-                "(that would mean this known vulnerability has been fixed)."
-            )
+        fired = page.evaluate("window.__xss_fired === true")
+        assert not fired, "XSS payload in username executed - escaping regressed"
+
+        # The payload must still be visible to the admin, just as literal
+        # (escaped) text, not silently stripped/hidden.
+        row_text = page.locator("#attack-tbody tr").first.inner_text()
+        assert "img src=x" in row_text
+
+    def test_db05_xss_payload_does_not_execute_on_attacks_page(self, page, live_stack_clean):
+        """Same escaping fix, checked on attacks.html's own (separate)
+        render function - a different file than index.html/app.js, so a
+        typo fixing one wouldn't be caught by the other's test."""
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        xss_payload = '<img src=x onerror="window.__xss_fired=true">'
+        test_db.attacks.insert_one(
+            {
+                "event": "cowrie.login.failed",
+                "src_ip": "203.0.113.7",
+                "username": xss_payload,
+                "password": "whatever",
+                "timestamp": "2026-01-01T00:00:00",
+            }
+        )
+
+        _login_via_ui(page, dashboard_url, username, password)
+        page.goto(f"{dashboard_url}/attacks.html")
+        expect(page.locator("#attack-tbody tr").first).to_be_visible()
+
+        assert page.evaluate("window.__xss_fired === true") is not True
+
+    def test_db05_xss_payload_does_not_execute_on_stats_page(self, page, live_stack_clean):
+        """Same fix, checked on stats.html's top-passwords list - password
+        is directly attacker-typed input, and this is a third, separately
+        maintained render function."""
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        xss_payload = '<img src=x onerror="window.__xss_fired=true">'
+        test_db.attacks.insert_one(
+            {
+                "event": "cowrie.login.failed",
+                "src_ip": "203.0.113.7",
+                "username": "root",
+                "password": xss_payload,
+                "timestamp": "2026-01-01T00:00:00",
+            }
+        )
+
+        _login_via_ui(page, dashboard_url, username, password)
+        page.goto(f"{dashboard_url}/stats.html")
+        expect(page.locator("#top-passwords tr").first).to_be_visible()
+
+        assert page.evaluate("window.__xss_fired === true") is not True
 
 
 # ---------------------------------------------------------------------------
 # DB-06: session expiring mid-use
 # ---------------------------------------------------------------------------
 class TestSessionExpiry:
-    def test_db06_invalidated_session_shows_silent_empty_data_not_a_redirect(
+    def test_db06_invalidated_session_redirects_to_login(
         self, page, live_stack_clean
     ):
         """
-        Documents a known gap: the dashboard only checks the session once,
-        at page load (requireAuth()). If the session becomes invalid while
-        the page is already open, clicking "Làm mới" silently shows empty/
-        zeroed data (data.js's fetch helpers catch errors and return
-        defaults) instead of detecting the 401 and redirecting to login.
+        Regression test for a fixed gap: the dashboard used to only check
+        the session once, at page load (requireAuth()). If the session
+        became invalid while the page was already open, clicking "Làm mới"
+        would silently show empty/zeroed data (fetch() does not reject on
+        an HTTP 401) instead of detecting it and redirecting to login.
+        authFetch() (js/auth.js) now checks every response's status and
+        redirects to login.html on a 401.
         """
         api_url, dashboard_url, test_db = live_stack_clean
         username, password = _seed_user(test_db)
@@ -218,19 +271,7 @@ class TestSessionExpiry:
         )
 
         page.click(".btn-refresh")
-        page.wait_for_timeout(1000)
-
-        # fetch() doesn't reject on an HTTP 401 - fetchStats() happily
-        # parses the {"detail": "..."} error body as if it were the real
-        # stats object, so stat-total ends up blank/garbled rather than
-        # showing an error or the correct "1". The exact garbled value
-        # isn't the point - what matters is it's silently WRONG, and nothing
-        # tells the admin their session died mid-use.
-        expect(page.locator("#stat-total")).not_to_have_text("1")
-        assert "login.html" not in page.url, (
-            "the dashboard redirected to login on an invalidated session mid-use - "
-            "if this is now handled, update/remove this test and its docstring"
-        )
+        page.wait_for_url(f"{dashboard_url}/login.html", timeout=5000)
 
 
 # ---------------------------------------------------------------------------

@@ -106,6 +106,7 @@
     </div>
   </div>
 
+  <script src="js/escape.js"></script>
   <script src="js/data.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/charts.js"></script>
@@ -120,8 +121,8 @@
         fetchTypes(),
         fetchTopIPs(),
         fetchTopPasswords(),
-        fetch(`${API_URL}/api/top-usernames?limit=10`, { credentials: 'include' }).then(r=>r.json()).catch(()=>({data:[]})),
-        fetch(`${API_URL}/api/stats/countries`, { credentials: 'include' }).then(r=>r.json()).catch(()=>({data:[]}))
+        authFetch(`${API_URL}/api/top-usernames?limit=10`).then(r=>r.json()).catch(()=>({data:[]})),
+        authFetch(`${API_URL}/api/stats/countries`).then(r=>r.json()).catch(()=>({data:[]}))
       ])
 
       document.getElementById('s-total').textContent   = stats.total || 0
@@ -138,8 +139,8 @@
         .map((d,i) => `
           <tr>
             <td style="color:#64748b">${i+1}</td>
-            <td style="font-family:monospace;color:#60a5fa">${d.ip}</td>
-            <td><span class="badge failed">${d.count} lần</span></td>
+            <td style="font-family:monospace;color:#60a5fa">${escapeHtml(d.ip)}</td>
+            <td><span class="badge failed">${escapeHtml(d.count)} lần</span></td>
           </tr>`
         ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 
@@ -147,8 +148,8 @@
         .map((d,i) => `
           <tr>
             <td style="color:#64748b">${i+1}</td>
-            <td style="font-family:monospace;color:#fbbf24">${d.password}</td>
-            <td><span class="badge failed">${d.count} lần</span></td>
+            <td style="font-family:monospace;color:#fbbf24">${escapeHtml(d.password)}</td>
+            <td><span class="badge failed">${escapeHtml(d.count)} lần</span></td>
           </tr>`
         ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 
@@ -156,8 +157,8 @@
         .map((d,i) => `
           <tr>
             <td style="color:#64748b">${i+1}</td>
-            <td style="color:#a78bfa">${d.username}</td>
-            <td><span class="badge failed">${d.count} lần</span></td>
+            <td style="color:#a78bfa">${escapeHtml(d.username)}</td>
+            <td><span class="badge failed">${escapeHtml(d.count)} lần</span></td>
           </tr>`
         ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
 

@@ -2,14 +2,14 @@ const API_URL = "http://localhost:8000"
 
 async function fetchStats() {
     try {
-        const res = await fetch(`${API_URL}/api/stats`, { credentials: 'include' })
+        const res = await authFetch(`${API_URL}/api/stats`)
         return await res.json()
     } catch { return { total:0, unique_ips:0, failed:0, success:0 } }
 }
 
 async function fetchAttacks() {
     try {
-        const res  = await fetch(`${API_URL}/api/attacks?limit=20`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/attacks?limit=20`)
         const data = await res.json()
         return (data.data || []).map(a => ({
             time:     a.timestamp ? a.timestamp.substring(11,19) : "--:--:--",
@@ -25,7 +25,7 @@ async function fetchAttacks() {
 
 async function fetchHours() {
     try {
-        const res  = await fetch(`${API_URL}/api/stats/hourly`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/stats/hourly`)
         const data = await res.json()
 
         const counts = {}
@@ -50,7 +50,7 @@ async function fetchHours() {
 
 async function fetchTypes() {
     try {
-        const res  = await fetch(`${API_URL}/api/stats`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/stats`)
         const data = await res.json()
         return {
             labels: ["Brute-force SSH", "Login Success", "Command Input"],
@@ -61,7 +61,7 @@ async function fetchTypes() {
 
 async function fetchTopIPs() {
     try {
-        const res  = await fetch(`${API_URL}/api/top-ips?limit=10`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/top-ips?limit=10`)
         const data = await res.json()
         return (data.data || []).filter(d => d.ip !== "127.0.0.1")
     } catch { return [] }
@@ -69,7 +69,7 @@ async function fetchTopIPs() {
 
 async function fetchTopPasswords() {
     try {
-        const res  = await fetch(`${API_URL}/api/top-passwords?limit=10`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/top-passwords?limit=10`)
         const data = await res.json()
         return (data.data || []).filter(d => !d.password?.startsWith("pass"))
     } catch { return [] }

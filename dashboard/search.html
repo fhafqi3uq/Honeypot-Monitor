@@ -103,6 +103,7 @@
 
   </div>
 
+  <script src="js/escape.js"></script>
   <script>
     const API_URL = "http://localhost:8000"
 
@@ -116,7 +117,7 @@
       document.getElementById('empty-state').style.display    = 'none'
 
       try {
-        const res  = await fetch(`${API_URL}/api/search?ip=${encodeURIComponent(ip)}`, { credentials: 'include' })
+        const res  = await authFetch(`${API_URL}/api/search?ip=${encodeURIComponent(ip)}`)
         const data = await res.json()
         const list = data.data || []
 
@@ -146,10 +147,10 @@
           const time      = a.timestamp ? a.timestamp.substring(0,19).replace('T',' ') : '--'
           return `
             <tr>
-              <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${time}</td>
-              <td style="color:#64748b;font-size:12px">${(a.event||'').replace('cowrie.','')}</td>
-              <td style="color:#e2e8f0">${a.username||'-'}</td>
-              <td style="font-family:monospace;color:#94a3b8;font-size:12px">${a.password||'-'}</td>
+              <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${escapeHtml(time)}</td>
+              <td style="color:#64748b;font-size:12px">${escapeHtml((a.event||'').replace('cowrie.',''))}</td>
+              <td style="color:#e2e8f0">${escapeHtml(a.username)||'-'}</td>
+              <td style="font-family:monospace;color:#94a3b8;font-size:12px">${escapeHtml(a.password)||'-'}</td>
               <td><span class="badge ${status}">${label}</span></td>
             </tr>`
         }).join('')

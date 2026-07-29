@@ -14,11 +14,11 @@ function updateTable(attacks) {
     const label     = isSuccess ? '✓ Success' : isCommand ? '⌨ Command' : '✗ Failed'
     return `
       <tr>
-        <td style="color:#94a3b8">${a.time}</td>
-        <td class="ip-text">${a.ip}</td>
-        <td>${a.username || '-'}</td>
-        <td style="color:#94a3b8">${a.password || '-'}</td>
-        <td style="color:#94a3b8">${a.event.replace('cowrie.','')}</td>
+        <td style="color:#94a3b8">${escapeHtml(a.time)}</td>
+        <td class="ip-text">${escapeHtml(a.ip)}</td>
+        <td>${escapeHtml(a.username) || '-'}</td>
+        <td style="color:#94a3b8">${escapeHtml(a.password) || '-'}</td>
+        <td style="color:#94a3b8">${escapeHtml(a.event.replace('cowrie.',''))}</td>
         <td><span class="badge ${status}">${label}</span></td>
       </tr>`
   }).join('')

@@ -95,6 +95,7 @@
     </div>
   </div>
 
+  <script src="js/escape.js"></script>
   <script src="js/data.js"></script>
   <script src="js/auth.js"></script>
   <script>
@@ -107,7 +108,7 @@
     async function loadAttackPage() {
       document.getElementById('attack-tbody').innerHTML =
         '<tr><td colspan="7" class="loading">Đang tải...</td></tr>'
-      const r = await fetch(`${API_URL}/api/attacks?limit=500`, { credentials: 'include' })
+      const r = await authFetch(`${API_URL}/api/attacks?limit=500`)
       const d = await r.json()
       allAttacks = (d.data||[]).map(a=>({
         time:     a.timestamp ? a.timestamp.substring(11,19) : "--",
@@ -147,12 +148,12 @@
           const label     = isSuccess ? '✓ Success' : isCommand ? '⌨ Command' : '✗ Failed'
           return `
             <tr>
-              <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${a.time||'--'}</td>
-              <td style="font-family:monospace;color:#60a5fa">${a.ip||'-'}</td>
-              <td style="font-size:13px">${a.country||'—'}</td>
-              <td style="color:#e2e8f0">${a.username||'-'}</td>
-              <td style="color:#94a3b8;font-family:monospace;font-size:12px">${a.password||'-'}</td>
-              <td style="color:#64748b;font-size:12px">${(a.event||'').replace('cowrie.','')}</td>
+              <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${escapeHtml(a.time)||'--'}</td>
+              <td style="font-family:monospace;color:#60a5fa">${escapeHtml(a.ip)||'-'}</td>
+              <td style="font-size:13px">${escapeHtml(a.country)||'—'}</td>
+              <td style="color:#e2e8f0">${escapeHtml(a.username)||'-'}</td>
+              <td style="color:#94a3b8;font-family:monospace;font-size:12px">${escapeHtml(a.password)||'-'}</td>
+              <td style="color:#64748b;font-size:12px">${escapeHtml((a.event||'').replace('cowrie.',''))}</td>
               <td><span class="badge ${status}">${label}</span></td>
             </tr>`
         }).join('')
