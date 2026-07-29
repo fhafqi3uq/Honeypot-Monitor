@@ -198,15 +198,16 @@ class TestLogWatcherTailing:
         doc = log_watcher.collection.find_one({}, {"_id": 0})
         assert doc["command"] == weird_command
 
-    def test_pl10_log_rotation_breaks_log_watcher(self, fresh_module, tmp_path):
+    def test_pl10_log_watcher_survives_log_rotation(self, fresh_module, tmp_path):
         """
-        Known gap: log_watcher.py opens LOG_FILE once via
-        `with open(LOG_FILE) as f:` and never checks whether the path has
-        since been replaced by a new file - which is exactly what Cowrie's
-        `logtype=rotating` does at midnight. realtime_alert.py handles this
-        correctly via an inode check (covered in the Alerting layer); this
-        test proves log_watcher.py does not, so events logged after a
-        rotation are silently lost until the process is restarted.
+        Regression test for a fixed gap: log_watcher.py used to open
+        LOG_FILE once and never notice the path had been replaced by a new
+        file - which is exactly what Cowrie's `logtype=rotating` does at
+        midnight, silently losing every event logged after a rotation
+        until the process was restarted. watch_log() now compares
+        os.stat().st_ino every poll cycle (same technique
+        realtime_alert.py already used) and reopens the path when the
+        inode changes.
         """
         log_watcher = fresh_module("log_watcher")
         append_line, log_path = _start_watch_log(log_watcher, tmp_path)
@@ -222,14 +223,12 @@ class TestLogWatcherTailing:
         with open(log_path, "a") as f:
             f.write(json.dumps(make_login_failed_event(session="after-rotation")) + "\n")
 
-        # Give the watcher several idle-poll cycles (it sleeps 1s between
-        # reads when there's nothing new) to prove it never picks this up.
-        time.sleep(3)
-        assert log_watcher.collection.count_documents({}) == 1, (
-            "log_watcher.py picked up the post-rotation event - if this "
-            "assertion now fails, the known rotation gap has been fixed; "
-            "update/remove this test and its docstring accordingly."
+        wait_until(
+            lambda: log_watcher.collection.count_documents({}) == 2,
+            message="log_watcher.py did not pick up the post-rotation event",
         )
+        sessions = {doc["session"] for doc in log_watcher.collection.find({}, {"_id": 0})}
+        assert sessions == {"before-rotation", "after-rotation"}
 
 
 # ---------------------------------------------------------------------------

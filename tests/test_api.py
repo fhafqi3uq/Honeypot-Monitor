@@ -247,3 +247,62 @@ class TestContentType:
             headers={"Content-Type": "text/plain"},
         )
         assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# RBAC: "viewer" role must be blocked from endpoints that export data or
+# have a write side-effect; "admin" keeps full access; accounts predating
+# the role field default to admin (backward compatibility).
+# ---------------------------------------------------------------------------
+def _login_with_role(fresh_app, username, password, role=None):
+    client, main, auth = fresh_app
+    user_doc = {"username": username, "password_hash": auth.hash_password(password), "created_at": auth._now()}
+    if role is not None:
+        user_doc["role"] = role
+    auth.users_col.insert_one(user_doc)
+    r = client.post("/auth/login", json={"username": username, "password": password})
+    assert r.status_code == 200
+    return client, main, auth
+
+
+ADMIN_ONLY_ENDPOINTS = ["/api/export/csv", "/api/alerts/pending"]
+VIEWER_ALLOWED_ENDPOINTS = [
+    "/api/stats", "/api/attacks", "/api/top-ips", "/api/top-passwords",
+    "/api/top-usernames", "/api/map-data", "/api/stats/hourly",
+    "/api/stats/countries", "/api/brute-force", "/api/search?ip=1.2.3.4",
+]
+
+
+class TestRoleBasedAccess:
+    @pytest.mark.parametrize("endpoint", ADMIN_ONLY_ENDPOINTS)
+    def test_rbac01_viewer_is_blocked_from_admin_only_endpoints(self, fresh_app, endpoint):
+        client, main, auth = _login_with_role(fresh_app, "viewer1", "Pass123!Aa", role="viewer")
+        r = client.get(endpoint)
+        assert r.status_code == 403
+
+    @pytest.mark.parametrize("endpoint", ADMIN_ONLY_ENDPOINTS)
+    def test_rbac02_admin_has_full_access_to_admin_only_endpoints(self, fresh_app, endpoint):
+        client, main, auth = _login_with_role(fresh_app, "admin1", "Pass123!Aa", role="admin")
+        r = client.get(endpoint)
+        assert r.status_code == 200
+
+    @pytest.mark.parametrize("endpoint", VIEWER_ALLOWED_ENDPOINTS)
+    def test_rbac03_viewer_can_still_read_ordinary_endpoints(self, fresh_app, endpoint):
+        client, main, auth = _login_with_role(fresh_app, "viewer2", "Pass123!Aa", role="viewer")
+        r = client.get(endpoint)
+        assert r.status_code == 200
+
+    def test_rbac04_account_predating_role_field_defaults_to_admin(self, fresh_app):
+        """Accounts created before this feature existed have no "role" key
+        at all - must still be treated as admin, or upgrading this code
+        would silently lock the real production admin account out of
+        export/alerts-pending after deploy."""
+        client, main, auth = _login_with_role(fresh_app, "legacy_admin", "Pass123!Aa", role=None)
+        r = client.get("/api/export/csv")
+        assert r.status_code == 200
+
+    def test_rbac05_me_endpoint_reports_current_role(self, fresh_app):
+        client, main, auth = _login_with_role(fresh_app, "viewer3", "Pass123!Aa", role="viewer")
+        r = client.get("/auth/me")
+        assert r.status_code == 200
+        assert r.json()["role"] == "viewer"

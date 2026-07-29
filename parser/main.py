@@ -9,6 +9,9 @@ from typing import Optional
 import io, csv
 
 import auth
+from log_setup import get_logger
+
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="Honeypot API - Version 2 (Pro)",
@@ -39,6 +42,11 @@ collection = db["attacks"]
 collection.create_index([("timestamp", -1)])
 collection.create_index([("src_ip", 1)])
 
+logger.info(
+    "API starting up, connected to database %s",
+    DB_NAME,
+)  # deliberately not logging MONGO_URL - it may embed credentials (mongodb://user:pass@host)
+
 COOKIE_KWARGS = {"httponly": True, "samesite": "lax", "secure": False, "path": "/"}
 
 
@@ -57,13 +65,22 @@ def login(payload: LoginRequest, request: Request, response: Response):
     if not auth.authenticate_user(payload.username, payload.password):
         auth.record_failed_attempt(ip, payload.username)
         auth.log_auth_event(ip, payload.username, success=False, user_agent=user_agent)
+        logger.warning(
+            "Failed login attempt for user '%s'", payload.username,
+            extra={"ip": ip, "username": payload.username, "endpoint": "/auth/login"},
+        )
         # Deliberately generic - never say which of username/password was wrong.
         raise HTTPException(status_code=401, detail="Sai thông tin đăng nhập")
 
     auth.reset_attempts(ip, payload.username)
     auth.log_auth_event(ip, payload.username, success=True, user_agent=user_agent)
+    logger.info(
+        "Successful login for user '%s'", payload.username,
+        extra={"ip": ip, "username": payload.username, "endpoint": "/auth/login"},
+    )
 
-    access_token = auth.create_access_token(payload.username)
+    role = auth.get_user_role(payload.username)
+    access_token = auth.create_access_token(payload.username, role)
     refresh_token = auth.create_refresh_token(payload.username)
     csrf_token = auth.new_csrf_token()
 
@@ -82,7 +99,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
         max_age=auth.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         httponly=False, samesite="lax", secure=False, path="/",
     )
-    return {"status": "ok", "username": payload.username, "csrf_token": csrf_token}
+    return {"status": "ok", "username": payload.username, "role": role, "csrf_token": csrf_token}
 
 
 @app.post("/auth/logout")
@@ -108,16 +125,21 @@ def refresh(
     _csrf: None = Depends(auth.verify_csrf),
 ):
     if not refresh_token:
+        logger.warning("Refresh attempted with no refresh_token cookie", extra={"endpoint": "/auth/refresh"})
         raise HTTPException(status_code=401, detail="Chưa đăng nhập hoặc phiên đã hết hạn")
 
     payload = auth.decode_token(refresh_token, expected_type="refresh")
     # Must still be present in the allowlist - deleted rows (logout, or a
     # prior refresh's rotation) mean this token has been revoked.
     if not auth.refresh_tokens_col.find_one({"jti": payload["jti"]}):
+        logger.warning(
+            "Rejected reuse of a revoked/rotated refresh token for user '%s'", payload["sub"],
+            extra={"username": payload["sub"], "endpoint": "/auth/refresh"},
+        )
         raise HTTPException(status_code=401, detail="Chưa đăng nhập hoặc phiên đã hết hạn")
 
     new_refresh_token = auth.rotate_refresh_token(payload["jti"], payload["sub"])
-    new_access_token = auth.create_access_token(payload["sub"])
+    new_access_token = auth.create_access_token(payload["sub"], auth.get_user_role(payload["sub"]))
 
     response.set_cookie(
         "access_token", new_access_token,
@@ -132,7 +154,7 @@ def refresh(
 
 @app.get("/auth/me")
 def me(user: str = Depends(auth.get_current_user)):
-    return {"username": user}
+    return {"username": user, "role": auth.get_user_role(user)}
 
 
 @app.get("/")
@@ -199,7 +221,10 @@ def get_top_usernames(limit: int = 10, user: str = Depends(auth.get_current_user
     return {"data": list(collection.aggregate(pipeline))}
 
 @app.get("/api/alerts/pending")
-def get_pending_alerts(user: str = Depends(auth.get_current_user)):
+def get_pending_alerts(user: str = Depends(auth.require_admin)):
+    # require_admin, not get_current_user: this GET has a write side-effect
+    # below (marks matched docs alerted=True, consuming the queue) - a
+    # read-only viewer shouldn't be able to trigger that.
     alerts = list(
         collection.find(
             {"event": {"$in": ["cowrie.login.success", "cowrie.login.failed"]},
@@ -278,7 +303,8 @@ def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):
     return {"ip": ip, "total": len(attacks), "data": attacks}
 
 @app.get("/api/export/csv")
-def export_csv(user: str = Depends(auth.get_current_user)):
+def export_csv(user: str = Depends(auth.require_admin)):
+    logger.info("CSV export requested by '%s'", user, extra={"username": user, "endpoint": "/api/export/csv"})
     data   = list(collection.find({}, {"_id": 0}).sort("timestamp", -1).limit(1000))
     output = io.StringIO()
     if data:

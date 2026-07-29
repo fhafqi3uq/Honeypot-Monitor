@@ -41,7 +41,7 @@ from typing import Optional
 import bcrypt
 import jwt
 from dotenv import load_dotenv
-from fastapi import Cookie, Header, HTTPException, Request, status
+from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from pymongo import MongoClient
 
 load_dotenv()
@@ -61,6 +61,15 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_ATTEMPT_WINDOW_MINUTES = 15
 LOCKOUT_MINUTES = 15
+
+# "admin" can do everything; "viewer" is read-only (see require_admin() below
+# for exactly which endpoints that blocks). Accounts created before roles
+# existed have no "role" field at all - they default to "admin" so upgrading
+# this code never silently locks out an existing production account.
+ROLE_ADMIN = "admin"
+ROLE_VIEWER = "viewer"
+VALID_ROLES = (ROLE_ADMIN, ROLE_VIEWER)
+DEFAULT_ROLE = ROLE_ADMIN
 
 # bcrypt hard limit: it raises ValueError for inputs over 72 bytes rather
 # than silently truncating (older bcrypt releases used to truncate).
@@ -108,10 +117,22 @@ def _now() -> datetime:
     return datetime.utcnow()
 
 
-def create_access_token(username: str) -> str:
+def get_user_role(username: str) -> str:
+    """Looked up fresh at login and at every /auth/refresh (not baked into
+    the long-lived refresh token), so demoting/promoting a user's role
+    takes effect on that user's next token refresh without needing to
+    revoke anything."""
+    user = users_col.find_one({"username": username})
+    if not user:
+        return DEFAULT_ROLE
+    return user.get("role", DEFAULT_ROLE)
+
+
+def create_access_token(username: str, role: str) -> str:
     now = _now()
     payload = {
         "sub": username,
+        "role": role,
         "type": "access",
         "jti": uuid.uuid4().hex,
         "iat": now,
@@ -249,16 +270,35 @@ def authenticate_user(username: str, password: str) -> bool:
     return verify_password(password, user["password_hash"])
 
 
-def get_current_user(
-    request: Request,
+def _get_access_payload(
     access_token: Optional[str] = Cookie(default=None),
-) -> str:
+) -> dict:
+    """Shared by get_current_user() and require_admin() below - FastAPI
+    caches a dependency's result per-request when the same callable is
+    depended on more than once, so the token is only decoded once even on
+    an endpoint that uses require_admin (which itself depends on this)."""
     if not access_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Chưa đăng nhập hoặc phiên đã hết hạn",
         )
-    payload = decode_token(access_token, expected_type="access")
+    return decode_token(access_token, expected_type="access")
+
+
+def get_current_user(payload: dict = Depends(_get_access_payload)) -> str:
+    return payload["sub"]
+
+
+def require_admin(payload: dict = Depends(_get_access_payload)) -> str:
+    """Dependency for endpoints a 'viewer' role must not reach (data export,
+    and anything that mutates/consumes data rather than just reading it).
+    Tokens issued before roles existed have no "role" claim - treated as
+    DEFAULT_ROLE (admin), same backward-compat rule as get_user_role()."""
+    if payload.get("role", DEFAULT_ROLE) != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ tài khoản admin mới có quyền truy cập chức năng này",
+        )
     return payload["sub"]
 
 

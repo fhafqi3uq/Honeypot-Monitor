@@ -1,14 +1,19 @@
+import html
 import requests
 import os
 from dotenv import load_dotenv
+from notify_log_setup import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 TOKEN     = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 ABUSE_KEY = os.getenv("ABUSEIPDB_KEY")
 
 def send_message(text: str) -> bool:
+    # Never log TOKEN/url - it embeds TELEGRAM_TOKEN.
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     res = requests.post(url, json={
         "chat_id":    CHAT_ID,
@@ -16,6 +21,8 @@ def send_message(text: str) -> bool:
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     })
+    if res.status_code != 200:
+        logger.warning("Telegram send_message failed with status %s", res.status_code)
     return res.status_code == 200
 
 def check_abuseipdb(ip: str) -> int:
@@ -28,8 +35,15 @@ def check_abuseipdb(ip: str) -> int:
         params = {'ipAddress': ip, 'maxAgeInDays': '90'}
         res = requests.get(url, headers=headers, params=params, timeout=5).json()
         return res['data']['abuseConfidenceScore']
-    except:
+    except Exception:
+        logger.warning("AbuseIPDB lookup failed for %s", ip, extra={"ip": ip}, exc_info=True)
         return 0
+
+def _esc(value) -> str:
+    """html.escape() attacker-controlled fields before they land in a
+    parse_mode=HTML Telegram message - value may be None (Cowrie doesn't
+    always populate username/password/input)."""
+    return html.escape(str(value)) if value is not None else ""
 
 def get_severity(eventid, abuse_score=0):
     """Phân loại mức độ cảnh báo 🔴🟠🟡🔵"""
@@ -53,7 +67,8 @@ def get_ip_info(ip: str) -> dict:
             "isp": data.get("org", "Unknown"),
             "lat": lat, "lon": lon, "abuse_score": abuse_score
         }
-    except:
+    except Exception:
+        logger.warning("ipinfo.io lookup failed for %s", ip, extra={"ip": ip}, exc_info=True)
         return {"location": "Unknown", "isp": "Unknown", "lat": None, "lon": None, "abuse_score": abuse_score}
 
 def alert_login_failed(ip: str, username: str, password: str, count: int):
@@ -61,11 +76,11 @@ def alert_login_failed(ip: str, username: str, password: str, count: int):
     label, _ = get_severity("cowrie.login.failed", info['abuse_score'])
     msg = (
         f"{label}\n━━━━━━━━━━━━━━━\n"
-        f"🌐 IP: <code>{ip}</code> (Score: {info['abuse_score']})\n"
-        f"📍 Vị trí: <b>{info['location']}</b>\n"
-        f"🏢 ISP: <i>{info['isp']}</i>\n"
-        f"👤 User: <code>{username}</code>\n"
-        f"🔑 Pass: <code>{password}</code>\n"
+        f"🌐 IP: <code>{_esc(ip)}</code> (Score: {info['abuse_score']})\n"
+        f"📍 Vị trí: <b>{_esc(info['location'])}</b>\n"
+        f"🏢 ISP: <i>{_esc(info['isp'])}</i>\n"
+        f"👤 User: <code>{_esc(username)}</code>\n"
+        f"🔑 Pass: <code>{_esc(password)}</code>\n"
         f"🔢 Số lần thử: <b>{count}</b>"
     )
     return send_message(msg)
@@ -75,9 +90,9 @@ def alert_login_success(ip: str, username: str, password: str):
     label, _ = get_severity("cowrie.login.success")
     msg = (
         f"{label}\n━━━━━━━━━━━━━━━\n"
-        f"🌐 IP: <code>{ip}</code>\n"
-        f"📍 Vị trí: <b>{info['location']}</b>\n"
-        f"👤 User: <code>{username}</code> | Pass: <code>{password}</code>\n"
+        f"🌐 IP: <code>{_esc(ip)}</code>\n"
+        f"📍 Vị trí: <b>{_esc(info['location'])}</b>\n"
+        f"👤 User: <code>{_esc(username)}</code> | Pass: <code>{_esc(password)}</code>\n"
         f"❗ <b>Kẻ tấn công đã vào được hệ thống!</b>"
     )
     return send_message(msg)
@@ -87,8 +102,8 @@ def alert_command(ip: str, command: str):
     label, _ = get_severity("cowrie.command.input")
     msg = (
         f"{label}\n━━━━━━━━━━━━━━━\n"
-        f"🌐 IP: <code>{ip}</code>\n"
-        f"📍 Vị trí: <b>{info['location']}</b>\n"
-        f"⌨️ Lệnh: <code>{command}</code>"
+        f"🌐 IP: <code>{_esc(ip)}</code>\n"
+        f"📍 Vị trí: <b>{_esc(info['location'])}</b>\n"
+        f"⌨️ Lệnh: <code>{_esc(command)}</code>"
     )
     return send_message(msg)

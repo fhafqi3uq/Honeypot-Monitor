@@ -4,6 +4,9 @@ import time
 from datetime import datetime
 from pymongo import MongoClient
 from bot import alert_login_failed, alert_login_success, alert_command
+from notify_log_setup import get_logger
+
+logger = get_logger(__name__)
 
 # Đường dẫn log Cowrie
 
@@ -100,7 +103,10 @@ def process_event(raw: dict):
         "created_at":      datetime.utcnow()
     }
     collection.insert_one(doc)
-    print(f"  ✓ {eventid:35} | {ip:15} | {geo['country']}")
+    logger.info(
+        "%s from %s (%s)", eventid, ip, geo["country"],
+        extra={"event": eventid, "ip": ip, "session": session},
+    )
 
     # session closed -> nothing else will reference this session's cache
     if eventid == "cowrie.session.closed":
@@ -113,20 +119,18 @@ def process_event(raw: dict):
 
     if eventid == "cowrie.login.failed":
         alert_login_failed(ip, username, password, 1)
-        print(f"  📨 Gửi cảnh báo brute-force: {ip}")
+        logger.info("Sent brute-force Telegram alert", extra={"ip": ip, "event": eventid})
 
     elif eventid == "cowrie.login.success":
         alert_login_success(ip, username, password)
-        print(f"  🚨 Gửi cảnh báo login success: {ip}")
+        logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
 
     elif eventid == "cowrie.command.input":
         alert_command(ip, command)
-        print(f"  💻 Gửi cảnh báo command: {ip}")
+        logger.info("Sent command-input Telegram alert", extra={"ip": ip, "event": eventid})
 
 def watch_log():
-    print(f"🚀 Realtime Alert đang chạy...")
-    print(f"👀 Theo dõi: {LOG_FILE}")
-    print(f"📨 Telegram cảnh báo ngay khi có tấn công\n")
+    logger.info("Realtime alert watcher starting, watching %s", LOG_FILE)
 
     import os
     current_inode = os.stat(LOG_FILE).st_ino
@@ -136,7 +140,7 @@ def watch_log():
         try:
             stat = os.stat(LOG_FILE)
             if stat.st_ino != current_inode:
-                print("🔄 File log rotate - mở file mới...")
+                logger.warning("Cowrie log file was rotated - reopening")
                 f.close()
                 f = open(LOG_FILE, "r")
                 current_inode = stat.st_ino
@@ -152,8 +156,8 @@ def watch_log():
                 process_event(raw)
             except json.JSONDecodeError:
                 continue
-        except Exception as e:
-            print(f"Lỗi: {e}")
+        except Exception:
+            logger.error("Unexpected error in watch_log loop", exc_info=True)
             time.sleep(5)
 
 if __name__ == "__main__":

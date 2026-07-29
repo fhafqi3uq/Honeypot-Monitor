@@ -1,0 +1,71 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project overview
+
+Honeypot Monitor collects, analyzes, and alerts on SSH attacks captured by a Cowrie honeypot. Attackers hit a fake SSH server, events are parsed into MongoDB, a FastAPI backend serves stats/queries, a static JS dashboard visualizes them, and a Telegram bot pushes realtime + daily alerts. There is no build step or linter configured in this repo; there IS a pytest suite (`tests/`) covering parser/alerting/auth/API/dashboard/E2E layers — see the safety note below before running or writing any script against these modules.
+
+**Safety when touching parser/notifier code**: `parser/log_watcher.py`, `parser/parser.py`, `parser/cleanup.py`, `parser/auth.py`, and `notifier/{realtime_alert,telegram_commands}.py` all do `MongoClient(...)` at import time, pointed at the real `honeypot` database by default. Never `import` or run these directly outside of pytest (which patches `pymongo.MongoClient` session-wide via `tests/conftest.py`'s `_never_touch_real_mongo` fixture) — an ad-hoc script bypasses that safety net and can write real rows into production. Always go through the `fresh_module`/`fresh_app` fixtures in a real test file instead.
+
+## Architecture
+
+Four independent components communicate only through the Cowrie JSON log file and a shared MongoDB `honeypot.attacks` collection — there is no direct import between them:
+
+- **honeypot/cowrie-src** — git submodule running Cowrie, a simulated SSH/Telnet server. Writes one JSON event per line to `honeypot/cowrie-src/var/log/cowrie/cowrie.json`. This is the only integration point other components read from.
+- **parser/** — FastAPI backend (`main.py`) + two independent long-running scripts that both tail the same Cowrie log and insert into MongoDB: `log_watcher.py` (backfills the `alerted` flag as `False`, for the dashboard/API path) and, separately, `notifier/realtime_alert.py` (inserts with `alerted: True` and triggers a Telegram push in the same pass). Both watchers detect Cowrie log rotation (`logtype=rotating`, typically at midnight) by comparing `os.stat().st_ino` every poll cycle and reopening the path when the inode changes — the file is never left pointing at a renamed-away, no-longer-updated fd. `parser.py` is the one-shot importer for `honeypot/sample_log.json`, used to seed a demo DB. `cleanup.py` runs on a `schedule` loop and deletes documents older than 30 days at 00:00. `geoip_lookup.py` wraps a local MaxMind `.mmdb` file (path: `parser/geoip/GeoLite2-City.mmdb`, gitignored — must be downloaded separately) to enrich each event with country/city/lat-lon; private IP ranges (`127.`, `192.168.`, `10.`, `172.`) short-circuit to `"Local"` without a DB lookup. `log_setup.py` provides `get_logger(name)` — structured JSON logging (one JSON object per line: timestamp/level/module/message + optional ip/session/username/event/endpoint context) written to `logs/parser.log`, used by `log_watcher.py` and `main.py`. Never log secrets (`JWT_SECRET_KEY`, `MONGO_URL` if it ever embeds credentials) through this logger — it does no redaction, callers must simply not pass secrets in.
+- **notifier/** — `bot.py` holds the Telegram send/format helpers (severity levels, AbuseIPDB scoring, ipinfo.io lookups) shared by `realtime_alert.py` (tails the Cowrie log directly, independent of `parser/log_watcher.py`), `daily_report.py` (scheduled 08:00 summary, reads the Cowrie log or falls back to `honeypot/sample_log.json` if it doesn't exist yet), and `telegram_commands.py` (long-polls Telegram `getUpdates` for `/stats`, `/top`, `/brute`, `/help`, querying MongoDB directly). `bot.py` escapes every attacker-controlled field (`ip`, `username`, `password`, `command`, and the `location`/`isp` strings returned by ipinfo.io) via a shared `_esc()` helper (`html.escape`, `None`-safe) before interpolating into a `parse_mode="HTML"` Telegram message — messages are built with f-strings, so any new field added to an alert message must go through `_esc()` too, or it reopens the same HTML-injection hole. `notify_log_setup.py` is the notifier-side twin of `parser/log_setup.py` (deliberately a different filename — both directories are on `sys.path` simultaneously in tests, and two identically-named modules would collide in Python's module cache), writing to `logs/notifier.log`; used by `realtime_alert.py`, `daily_report.py`, and `bot.py`.
+- **dashboard/** — static HTML/CSS/vanilla JS (no build step, no framework). `js/data.js` is the only file that talks to the API (`API_URL` hardcoded to `http://localhost:8000`); `js/app.js` and `js/charts.js` render what `data.js` fetches. Served via `live-server` on port 8080.
+
+**Known gap not yet fixed**: `daily_report.py`'s Telegram message interpolates `top_users`/`top_pass`/`last_cmd` (attacker-controlled) into an HTML message the same way `bot.py` used to before it was escaped — `daily_report.py` was not in scope for that fix and still needs the same `_esc()`/`html.escape()` treatment.
+
+Both `parser/` and `notifier/` duplicate their own `parse_event`/`get_geo` logic against the same Cowrie log rather than sharing a module — when changing event-parsing behavior (new event types, new fields), update it in both `parser/log_watcher.py`/`parser/parser.py` and `notifier/realtime_alert.py`, or the two collections' documents will drift out of sync.
+
+MongoDB document shape (collection `honeypot.attacks`), as produced by every parser above:
+```
+timestamp, src_ip, event, username, password, command, session, sensor,
+country, country_code, city, latitude, longitude, alerted, created_at
+```
+
+## Running the system
+
+Each component (`parser/`, `notifier/`) has its own Python venv and `requirements.txt`; there is no shared/root venv.
+
+```bash
+bash setup.sh    # first-time only: drops the DB, creates parser/ and notifier/ venvs, installs deps
+bash start.sh    # starts MongoDB, Cowrie, FastAPI, dashboard, realtime alert, daily report,
+                 # cleanup, telegram commands bot, and a 30s healthcheck loop — all as background
+                 # nohup processes under /tmp/*.log
+```
+
+`start.sh` and `healthcheck.sh` kill-and-restart each Python watcher by matching on process name (`pkill -f realtime_alert.py`, etc.) — there's no supervisor/systemd unit for the app-level processes, only for `mongod`. `healthcheck.sh` polls every service every 30s and sends a Telegram alert on failure and on recovery.
+
+Running a single piece manually (after activating its venv):
+```bash
+cd parser && source venv/bin/activate
+python parser.py                              # one-shot import of honeypot/sample_log.json (drops collection first)
+python log_watcher.py                         # tail real Cowrie log -> Mongo (alerted=False)
+uvicorn main:app --host 0.0.0.0 --port 8000   # API only
+python cleanup.py                             # 30-day retention loop
+
+cd notifier && source venv/bin/activate
+python realtime_alert.py       # tail real Cowrie log -> Mongo (alerted=True) + Telegram push
+python daily_report.py         # sends one report immediately, then schedules 08:00 daily
+python telegram_commands.py    # bot command long-poller
+
+cd dashboard && live-server . --port=8080
+```
+
+Required env files (gitignored, not present in a fresh clone):
+- `notifier/.env` — `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `ABUSEIPDB_KEY`
+- `parser/.env.example` documents `MONGO_URL`/`DB_NAME`; `parser/main.py`, `parser/auth.py`, `parser/log_watcher.py`, `parser/cleanup.py`, and `notifier/realtime_alert.py` all read them (defaulting to `mongodb://localhost:27017`/`honeypot` if unset). `parser/parser.py` (one-shot demo-seed importer) and `notifier/telegram_commands.py` still hardcode the URL — don't assume changing `.env` affects them.
+
+GeoIP database (`parser/geoip/GeoLite2-City.mmdb`) is gitignored and must be downloaded separately (see SETUP.md) before geo enrichment works; without it, `get_geo()` fails closed to `"Unknown"`/`0,0`.
+
+## Key API endpoints (parser/main.py)
+
+`/api/stats`, `/api/attacks` (supports `start_date`/`end_date`), `/api/top-ips`, `/api/top-passwords`, `/api/top-usernames`, `/api/brute-force` (flags `HIGH`/`MEDIUM`/`LOW` by failed-attempt count), `/api/map-data`, `/api/search?ip=`, `/api/export/csv`, `/api/stats/hourly`, `/api/stats/countries`, `/api/alerts/pending` (marks returned docs `alerted: True` as a side effect — calling it consumes the queue).
+
+## Auth roles (admin / viewer)
+
+`users` documents have a `role` field (`"admin"` or `"viewer"`, see `auth.ROLE_ADMIN`/`auth.ROLE_VIEWER`); accounts created before this field existed have none and default to `"admin"` (`auth.DEFAULT_ROLE`) rather than being locked out. Role is embedded in the access-token JWT at login and re-read from Mongo at every `/auth/refresh`, so a role change takes effect on that user's next refresh without needing to revoke anything. `auth.require_admin` (vs. the ordinary `auth.get_current_user`) gates `/api/export/csv` and `/api/alerts/pending` — the latter is GET but mutates (`alerted: True`), which is why it's admin-only despite reading like a query. All other `/api/*` endpoints are readable by both roles. `parser/create_admin.py --role viewer` (or `parser/create_viewer.py`, a thin wrapper) creates a read-only account; default with no flag is `admin`.

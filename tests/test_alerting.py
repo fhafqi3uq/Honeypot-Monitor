@@ -100,6 +100,47 @@ class TestBotResilience:
 
 
 # ---------------------------------------------------------------------------
+# Telegram HTML injection: attacker-controlled fields must be escaped before
+# landing in a parse_mode="HTML" message, or a crafted command/username can
+# break the message layout or (depending on Telegram's own HTML sanitizing)
+# inject unexpected markup.
+# ---------------------------------------------------------------------------
+class TestTelegramHTMLEscaping:
+    def _mock_ip_info(self, monkeypatch):
+        # 127.0.0.1 short-circuits check_abuseipdb() without an HTTP call;
+        # only the ipinfo.io lookup needs mocking.
+        monkeypatch.setattr(
+            requests, "get", Mock(return_value=Mock(json=Mock(return_value={
+                "city": "Hanoi", "country": "VN", "org": "AS0 Test ISP", "loc": "21.0,105.8",
+            })))
+        )
+
+    def test_al09_script_payload_in_command_is_escaped_not_executed(self, fresh_module, monkeypatch):
+        bot = fresh_module("bot")
+        self._mock_ip_info(monkeypatch)
+        mock_post = Mock(return_value=Mock(status_code=200))
+        monkeypatch.setattr(requests, "post", mock_post)
+
+        bot.alert_command("127.0.0.1", "<script>alert(1)</script>")
+
+        sent_text = mock_post.call_args.kwargs["json"]["text"]
+        assert "<script>" not in sent_text
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in sent_text
+
+    def test_al09_img_onerror_payload_in_username_is_escaped(self, fresh_module, monkeypatch):
+        bot = fresh_module("bot")
+        self._mock_ip_info(monkeypatch)
+        mock_post = Mock(return_value=Mock(status_code=200))
+        monkeypatch.setattr(requests, "post", mock_post)
+
+        bot.alert_login_failed("127.0.0.1", '<img src=x onerror=alert(1)>', "pw", 1)
+
+        sent_text = mock_post.call_args.kwargs["json"]["text"]
+        assert "<img" not in sent_text
+        assert "&lt;img src=x onerror=alert(1)&gt;" in sent_text
+
+
+# ---------------------------------------------------------------------------
 # AL-01, AL-02, AL-03, AL-04, AL-05: realtime_alert.py event routing
 # ---------------------------------------------------------------------------
 class TestRealtimeAlertRouting:

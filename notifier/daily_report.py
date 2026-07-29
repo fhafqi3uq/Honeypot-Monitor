@@ -5,6 +5,9 @@ import time
 from datetime import datetime
 from collections import Counter
 from bot import send_message
+from notify_log_setup import get_logger
+
+logger = get_logger(__name__)
 
 LOG_FILE = os.path.expanduser(
     "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
@@ -28,7 +31,7 @@ def process_logs():
         log_path = os.path.expanduser(SAMPLE_LOG)
 
     if not os.path.exists(log_path):
-        print(f"❌ Không tìm thấy file log!")
+        logger.warning("No Cowrie log or sample log found at %s", log_path)
         return None
 
     # Chỉ lấy log của ngày hôm nay
@@ -63,11 +66,11 @@ def process_logs():
             except Exception:
                 continue
 
-    print(f"📋 Tìm thấy {count_today} sự kiện hôm nay ({today})")
+    logger.info("Found %d events for today (%s)", count_today, today)
     return stats
 
 def send_daily_report():
-    print(f"[{datetime.now()}] Đang tổng hợp báo cáo ngày {datetime.now().strftime('%d/%m/%Y')}...")
+    logger.info("Compiling daily report for %s", datetime.now().strftime('%d/%m/%Y'))
     data = process_logs()
 
     if not data:
@@ -110,17 +113,15 @@ def send_daily_report():
     )
 
     if send_message(msg):
-        print("✅ Đã gửi báo cáo lên Telegram!")
+        logger.info("Daily report sent to Telegram")
     else:
-        print("❌ Gửi thất bại.")
+        logger.error("Failed to send daily report to Telegram")
 
 # Lập lịch 8h sáng mỗi ngày
 schedule.every().day.at("08:00").do(send_daily_report)
 
 if __name__ == "__main__":
-    print("🚀 Scheduler đang chạy...")
-    print(f"📋 Báo cáo tự động lúc 08:00 mỗi ngày")
-    print(f"📅 Hôm nay: {datetime.now().strftime('%d/%m/%Y')}")
+    logger.info("Daily report scheduler starting, scheduled for 08:00 daily")
 
     # Test ngay
     send_daily_report()

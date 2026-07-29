@@ -4,6 +4,9 @@ import os
 from datetime import datetime, timezone
 from pymongo import MongoClient
 from geoip_lookup import get_geo
+from log_setup import get_logger
+
+logger = get_logger(__name__)
 
 client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
 db         = client[os.getenv("DB_NAME", "honeypot")]
@@ -49,6 +52,8 @@ def parse_event(raw: dict):
         return None
     ip  = raw.get("src_ip", "")
     geo = get_geo(ip)
+    if geo["country"] == "Unknown" and not ip.startswith(("127.", "192.168.", "10.", "172.")):
+        logger.warning("GeoIP lookup returned Unknown for %s", ip, extra={"ip": ip})
     session = raw.get("session")
     cached = SESSION_CACHE.get(session, {})
     doc = {
@@ -80,27 +85,50 @@ def parse_event(raw: dict):
     return doc
 
 def watch_log():
-    print(f"👀 Đang theo dõi: {LOG_FILE}")
-    print("   Ctrl+C để dừng\n")
-    with open(LOG_FILE, "r") as f:
-        f.seek(0, 2)  # nhảy đến cuối file
-        while True:
-            line = f.readline()
-            if not line:
-                time.sleep(1)
-                continue
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                raw = json.loads(line)
-                update_session_cache(raw)
-                doc = parse_event(raw)
-                if doc:
+    logger.info("Watching Cowrie log: %s", LOG_FILE)
+    # Cowrie's logtype=rotating renames the current file away and starts a
+    # new one at the same path (typically at midnight) - the inode changes
+    # even though the path doesn't, so comparing inodes is how we notice a
+    # rotation happened under our open file descriptor.
+    current_inode = os.stat(LOG_FILE).st_ino
+    f = open(LOG_FILE, "r")
+    f.seek(0, 2)  # nhảy đến cuối file
+    while True:
+        try:
+            stat = os.stat(LOG_FILE)
+        except FileNotFoundError:
+            time.sleep(1)
+            continue
+        if stat.st_ino != current_inode:
+            logger.warning("Cowrie log file was rotated - reopening %s", LOG_FILE)
+            f.close()
+            f = open(LOG_FILE, "r")
+            current_inode = stat.st_ino
+        line = f.readline()
+        if not line:
+            time.sleep(1)
+            continue
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            raw = json.loads(line)
+            update_session_cache(raw)
+            doc = parse_event(raw)
+            if doc:
+                try:
                     collection.insert_one(doc)
-                    print(f"  ✓ {doc['event']:35} | {doc['src_ip']:15} | {doc['country']}")
-            except json.JSONDecodeError:
-                continue
+                    logger.info(
+                        "%s from %s (%s)", doc["event"], doc["src_ip"], doc["country"],
+                        extra={"event": doc["event"], "ip": doc["src_ip"], "session": doc["session"]},
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to insert attack document into MongoDB",
+                        exc_info=True, extra={"event": doc["event"], "ip": doc["src_ip"]},
+                    )
+        except json.JSONDecodeError:
+            continue
 
 if __name__ == "__main__":
     watch_log()
