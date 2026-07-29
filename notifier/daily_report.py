@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import schedule
@@ -8,6 +9,14 @@ from bot import send_message
 from notify_log_setup import get_logger
 
 logger = get_logger(__name__)
+
+def _esc(value) -> str:
+    """html.escape() attacker-controlled fields before they land in a
+    parse_mode=HTML Telegram message - same helper as bot.py/
+    telegram_commands.py, kept as a local copy rather than a shared import
+    (see CLAUDE.md: parser/ and notifier/ already duplicate small helpers
+    like this rather than sharing a module)."""
+    return html.escape(str(value)) if value is not None else ""
 
 LOG_FILE = os.path.expanduser(
     "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
@@ -79,9 +88,9 @@ def send_daily_report():
     top_users = Counter(data["usernames"]).most_common(3)
     top_pass  = Counter(data["passwords"]).most_common(3)
 
-    user_str = "\n".join([f"  {i+1}. {u[0]} — {u[1]} lần" for i, u in enumerate(top_users)]) or "  Chưa có dữ liệu"
-    pass_str = "\n".join([f"  {i+1}. {p[0]} — {p[1]} lần" for i, p in enumerate(top_pass)]) or "  Chưa có dữ liệu"
-    last_cmd = data["commands"][-1] if data["commands"] else "Không có"
+    user_str = "\n".join([f"  {i+1}. {_esc(u[0])} — {u[1]} lần" for i, u in enumerate(top_users)]) or "  Chưa có dữ liệu"
+    pass_str = "\n".join([f"  {i+1}. {_esc(p[0])} — {p[1]} lần" for i, p in enumerate(top_pass)]) or "  Chưa có dữ liệu"
+    last_cmd = _esc(data["commands"][-1]) if data["commands"] else "Không có"
 
     # Đánh giá mức độ nguy hiểm
     if data["login_success"] > 0:

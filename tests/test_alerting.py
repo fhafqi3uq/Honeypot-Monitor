@@ -298,6 +298,52 @@ class TestDailyReportFallback:
 
         assert stats["login_failed"] == 0
 
+    def test_al09_html_injection_in_username_password_command_is_escaped(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        """Regression test: send_daily_report() interpolates the top
+        username/password and last command straight into a
+        parse_mode=HTML Telegram message - same injection class fixed in
+        bot.py/telegram_commands.py, but daily_report.py wasn't in scope
+        for that fix and needed its own _esc() pass."""
+        daily_report = fresh_module("daily_report")
+        today = datetime.now().strftime("%Y-%m-%d")
+        sample_log = tmp_path / "sample.json"
+        sample_log.write_text(
+            "\n".join(
+                [
+                    json.dumps({
+                        "eventid": "cowrie.login.failed",
+                        "timestamp": f"{today}T01:00:00Z",
+                        "src_ip": "203.0.113.7",
+                        "username": "<img src=x onerror=alert(1)>",
+                        "password": "<script>alert(1)</script>",
+                    }),
+                    json.dumps({
+                        "eventid": "cowrie.command.input",
+                        "timestamp": f"{today}T01:00:01Z",
+                        "src_ip": "203.0.113.7",
+                        "input": "<b>rm -rf /</b>",
+                    }),
+                ]
+            )
+            + "\n"
+        )
+        monkeypatch.setattr(daily_report, "LOG_FILE", "/nonexistent/real.json")
+        monkeypatch.setattr(daily_report, "SAMPLE_LOG", str(sample_log))
+        mock_send = Mock()
+        monkeypatch.setattr(daily_report, "send_message", mock_send)
+
+        daily_report.send_daily_report()
+
+        sent_text = mock_send.call_args.args[0]
+        assert "<img" not in sent_text
+        assert "<script>" not in sent_text
+        assert "<b>rm -rf /</b>" not in sent_text
+        assert "&lt;img src=x onerror=alert(1)&gt;" in sent_text
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in sent_text
+        assert "&lt;b&gt;rm -rf /&lt;/b&gt;" in sent_text
+
 
 # ---------------------------------------------------------------------------
 # AL-10: notifier/telegram_commands.py query helpers
