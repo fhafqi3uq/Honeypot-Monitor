@@ -1,0 +1,138 @@
+# Containerizes Mongo + parser/ + notifier/ + dashboard/. Cowrie itself is
+# NOT included here (deliberate choice, see CLAUDE.md) - it keeps running
+# natively via `cowrie-env/bin/cowrie start` (or start.sh), the same way it
+# does today. Every container that needs the Cowrie log or the GeoIP
+# database reads it from the host through a read-only bind mount instead of
+# copying it into the image, so this file stays in sync with whatever the
+# native Cowrie process is actually writing.
+#
+# First-time setup (same secrets the native workflow already needs):
+#   cp parser/.env.example parser/.env       # fill in JWT_SECRET_KEY
+#   cp notifier/.env.example notifier/.env   # fill in TELEGRAM_TOKEN/CHAT_ID
+#   mkdir -p parser/geoip && download GeoLite2-City.mmdb there (see SETUP.md)
+#
+# Start Cowrie natively FIRST (or at least once, so its log file exists) -
+# the log-watcher/realtime-alert containers below stat() that file at
+# startup and will crash-loop (harmlessly - `restart: unless-stopped` just
+# keeps retrying) until it exists.
+#
+# Then:
+#   docker compose up -d --build
+#
+# API/dashboard are published to 127.0.0.1 only, matching the native
+# start.sh setup's security posture (an unauthenticated port reachable from
+# the same public interface as the honeypot would tell any port-scanning
+# attacker this is a monitored system).
+
+services:
+  mongo:
+    image: mongo:7.0
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  parser-api:
+    build: ./parser
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: ./parser/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+    volumes:
+      # log_setup.py resolves its log directory to /logs inside this image
+      # (2 levels up from /app/log_setup.py) - see CLAUDE.md if this looks
+      # like a strange mount point.
+      - ./logs/parser:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  parser-log-watcher:
+    build: ./parser
+    command: ["python", "log_watcher.py"]
+    env_file: ./parser/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+      COWRIE_LOG_FILE: /cowrie-log/cowrie.json
+    volumes:
+      - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
+      - ./parser/geoip:/app/geoip:ro
+      - ./logs/parser:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  parser-cleanup:
+    build: ./parser
+    command: ["python", "cleanup.py"]
+    env_file: ./parser/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notifier-realtime-alert:
+    build: ./notifier
+    command: ["python", "-u", "realtime_alert.py"]
+    env_file: ./notifier/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+      COWRIE_LOG_FILE: /cowrie-log/cowrie.json
+      GEOIP_DB_PATH: /geoip/GeoLite2-City.mmdb
+    volumes:
+      - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
+      - ./parser/geoip:/geoip:ro
+      - ./logs/notifier:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notifier-daily-report:
+    build: ./notifier
+    command: ["python", "-u", "daily_report.py"]
+    env_file: ./notifier/.env
+    environment:
+      COWRIE_LOG_FILE: /cowrie-log/cowrie.json
+    volumes:
+      - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
+      - ./logs/notifier:/logs
+    restart: unless-stopped
+
+  notifier-telegram-commands:
+    build: ./notifier
+    command: ["python", "-u", "telegram_commands.py"]
+    env_file: ./notifier/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+    volumes:
+      - ./logs/notifier:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+
+volumes:
+  mongo_data:

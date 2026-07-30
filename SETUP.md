@@ -104,6 +104,40 @@ bash ~/Honeypot-Monitor/start.sh
 
 ---
 
+## Cách khác: chạy bằng Docker Compose
+
+`docker-compose.yml` ở gốc repo container hoá MongoDB + parser/ + notifier/ +
+dashboard/ — **không gồm Cowrie**, Cowrie vẫn chạy native như Bước 3 ở trên
+(container hoá Twisted reactor bind port thấp + submodule không push phức
+tạp hơn nhiều, không đáng để làm chung đợt này).
+
+```bash
+# 1. Cowrie phải chạy native TRƯỚC (để file log cowrie.json tồn tại) -
+#    parser-log-watcher/notifier-realtime-alert stat() file này lúc khởi
+#    động, sẽ crash-loop (vô hại, restart: unless-stopped tự thử lại) tới
+#    khi file xuất hiện.
+cd honeypot/cowrie-src && source cowrie-env/bin/activate && cowrie-env/bin/cowrie start && cd ../..
+
+# 2. Tạo .env cho parser/ và notifier/ (giống hệt yêu cầu ở Bước 4/6)
+cp parser/.env.example parser/.env       # điền JWT_SECRET_KEY
+cp notifier/.env.example notifier/.env   # điền TELEGRAM_TOKEN/TELEGRAM_CHAT_ID
+
+# 3. Tải GeoIP database vào parser/geoip/ (giống Bước 4) nếu chưa có
+
+# 4. Build và chạy
+docker compose up -d --build
+
+# API:       http://localhost:8000 (127.0.0.1 only)
+# Dashboard: http://localhost:8080 (127.0.0.1 only)
+```
+
+Ghi chú: MongoDB trong Compose hiện **chưa bật authentication** (giống hệt
+mongod native hiện tại) - vẫn chỉ bind `127.0.0.1`, không lộ ra ngoài. Nếu
+tính triển khai VPS public thật, nên bật `--auth` cho Mongo trước, xem
+checklist go-live đã bàn trước đó.
+
+---
+
 ## Kiểm tra hệ thống
 ```bash
 # Cowrie

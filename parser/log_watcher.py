@@ -26,8 +26,9 @@ IMPORTANT_EVENTS = [
 # the IMPORTANT_EVENTS documents below instead of being stored on their own.
 SESSION_CACHE: dict[str, dict] = {}
 
-LOG_FILE = os.path.expanduser(
-    "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
+LOG_FILE = os.getenv(
+    "COWRIE_LOG_FILE",
+    os.path.expanduser("~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"),
 )
 
 def update_session_cache(raw: dict):

@@ -18,8 +18,9 @@ def _esc(value) -> str:
     like this rather than sharing a module)."""
     return html.escape(str(value)) if value is not None else ""
 
-LOG_FILE = os.path.expanduser(
-    "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
+LOG_FILE = os.getenv(
+    "COWRIE_LOG_FILE",
+    os.path.expanduser("~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"),
 )
 SAMPLE_LOG = os.path.join(os.path.dirname(__file__), '../honeypot/sample_log.json')
 

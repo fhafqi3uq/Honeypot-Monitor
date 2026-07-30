@@ -10,8 +10,9 @@ logger = get_logger(__name__)
 
 # Đường dẫn log Cowrie
 
-LOG_FILE = os.path.expanduser(
-    "~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"
+LOG_FILE = os.getenv(
+    "COWRIE_LOG_FILE",
+    os.path.expanduser("~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"),
 )
 
 # Kết nối MongoDB
@@ -54,7 +55,10 @@ def get_geo(ip: str) -> dict:
         return {"country": "Local", "country_code": "LO", "city": "localhost", "latitude": 0.0, "longitude": 0.0}
     try:
         import geoip2.database
-        DB_PATH = os.path.expanduser("~/Honeypot-Monitor/parser/geoip/GeoLite2-City.mmdb")
+        DB_PATH = os.getenv(
+            "GEOIP_DB_PATH",
+            os.path.expanduser("~/Honeypot-Monitor/parser/geoip/GeoLite2-City.mmdb"),
+        )
         with geoip2.database.Reader(DB_PATH) as reader:
             r = reader.city(ip)
             return {
