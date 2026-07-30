@@ -635,3 +635,51 @@ class TestCORS:
         )
         assert r.status_code == 400
         assert "access-control-allow-origin" not in r.headers
+
+
+# ---------------------------------------------------------------------------
+# Docker Compose `secrets:` support: JWT_SECRET_KEY can come from a file
+# (JWT_SECRET_KEY_FILE) instead of a plain env var - see auth._read_secret().
+# ---------------------------------------------------------------------------
+class TestSecretFileConvention:
+    def test_secrets01_jwt_secret_key_read_from_file_when_file_var_set(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        secret_file = tmp_path / "jwt_secret_key.txt"
+        secret_file.write_text("secret-from-a-mounted-file\n")  # trailing newline, like `echo` would leave
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.setenv("JWT_SECRET_KEY_FILE", str(secret_file))
+        monkeypatch.setenv("DASHBOARD_ORIGIN", "http://localhost:8080")
+
+        auth = fresh_module("auth")
+
+        assert auth.SECRET_KEY == "secret-from-a-mounted-file"  # stripped, not "...file\n"
+
+    def test_secrets02_file_variant_takes_priority_over_the_plain_env_var(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        """If both are set (e.g. a stale value left in .env plus a Docker
+        secret mounted on top), the file must win - it's the more specific,
+        more recently-configured source."""
+        secret_file = tmp_path / "jwt_secret_key.txt"
+        secret_file.write_text("from-the-secret-file")
+        monkeypatch.setenv("JWT_SECRET_KEY", "from-the-plain-env-var")
+        monkeypatch.setenv("JWT_SECRET_KEY_FILE", str(secret_file))
+        monkeypatch.setenv("DASHBOARD_ORIGIN", "http://localhost:8080")
+
+        auth = fresh_module("auth")
+
+        assert auth.SECRET_KEY == "from-the-secret-file"
+
+    def test_secrets03_falls_back_to_the_plain_env_var_when_no_file_set(
+        self, fresh_module, monkeypatch
+    ):
+        """The native venv workflow (start.sh) never sets *_FILE - this is
+        the existing, unchanged behavior fresh_app already relies on."""
+        monkeypatch.delenv("JWT_SECRET_KEY_FILE", raising=False)
+        monkeypatch.setenv("JWT_SECRET_KEY", "plain-env-var-secret")
+        monkeypatch.setenv("DASHBOARD_ORIGIN", "http://localhost:8080")
+
+        auth = fresh_module("auth")
+
+        assert auth.SECRET_KEY == "plain-env-var-secret"

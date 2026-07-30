@@ -6,10 +6,13 @@
 # copying it into the image, so this file stays in sync with whatever the
 # native Cowrie process is actually writing.
 #
-# First-time setup (same secrets the native workflow already needs):
-#   cp parser/.env.example parser/.env       # fill in JWT_SECRET_KEY
-#   cp notifier/.env.example notifier/.env   # fill in TELEGRAM_TOKEN/CHAT_ID
+# First-time setup:
+#   cp parser/.env.example parser/.env       # MONGO_URL/DB_NAME/DASHBOARD_ORIGIN
+#   cp notifier/.env.example notifier/.env   # same, plus native-workflow secrets
 #   mkdir -p parser/geoip && download GeoLite2-City.mmdb there (see SETUP.md)
+#   see secrets/README.md for the 4 secret files this stack actually reads
+#   its credentials from (JWT_SECRET_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
+#   ABUSEIPDB_KEY) - NOT plaintext .env, see the `secrets:` block below.
 #
 # Start Cowrie natively FIRST (or at least once, so its log file exists) -
 # the log-watcher/realtime-alert containers below stat() that file at
@@ -25,11 +28,28 @@
 # attacker this is a monitored system).
 #
 # Observability: mongodb-exporter + prometheus + grafana. parser-api exposes
-# its own /metrics (see parser/metrics.py, parser/main.py) - no separate
-# exporter needed for the app layer. Grafana auto-provisions the Prometheus
-# datasource and a starter "Honeypot Monitor - Overview" dashboard from
-# monitoring/grafana/ - open http://localhost:3000 (admin / admin by
-# default, change GRAFANA_ADMIN_PASSWORD before a real deployment).
+# its own /metrics; log_watcher.py/cleanup.py/realtime_alert.py/
+# daily_report.py/telegram_commands.py each expose their own /metrics too
+# (prometheus_client.start_http_server(), since none of them are otherwise
+# HTTP servers - ports 9100-9104, see each script's METRICS_PORT constant
+# and monitoring/prometheus.yml's scrape_configs). Grafana auto-provisions
+# the Prometheus datasource and a starter "Honeypot Monitor - Overview"
+# dashboard from monitoring/grafana/ - open http://localhost:3000
+# (admin / admin by default, change GRAFANA_ADMIN_PASSWORD before a real
+# deployment).
+#
+# Secrets: JWT_SECRET_KEY/TELEGRAM_TOKEN/TELEGRAM_CHAT_ID/ABUSEIPDB_KEY are
+# delivered via Compose's native `secrets:` (files bind-mounted read-only at
+# /run/secrets/<name>, kept out of `docker inspect`/`docker compose config`
+# output - unlike a plain environment variable) rather than through
+# env_file/.env. Each app reads them via a small `_read_secret()` helper
+# (parser/auth.py, notifier/bot.py, notifier/telegram_commands.py) that
+# checks the "<NAME>_FILE" env var this section sets, falling back to the
+# plain env var directly for the native venv workflow (unchanged - .env
+# still works there exactly as before). This is Compose's standalone/non-
+# swarm secret support (files, not swarm's encrypted secret store) - a real
+# step up from plaintext-in-.env without needing a whole extra service like
+# Vault for a project this size.
 
 services:
   mongo:
@@ -53,6 +73,9 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+      JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret_key
+    secrets:
+      - jwt_secret_key
     volumes:
       # log_setup.py resolves its log directory to /logs inside this image
       # (2 levels up from /app/log_setup.py) - see CLAUDE.md if this looks
@@ -71,6 +94,7 @@ services:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
       COWRIE_LOG_FILE: /cowrie-log/cowrie.json
+    expose: ["9100"]  # own /metrics - see log_watcher.py's METRICS_PORT
     volumes:
       - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
       - ./parser/geoip:/app/geoip:ro
@@ -87,6 +111,7 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+    expose: ["9102"]  # own /metrics - see cleanup.py's METRICS_PORT
     depends_on:
       mongo:
         condition: service_healthy
@@ -101,6 +126,14 @@ services:
       DB_NAME: honeypot
       COWRIE_LOG_FILE: /cowrie-log/cowrie.json
       GEOIP_DB_PATH: /geoip/GeoLite2-City.mmdb
+      TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+      ABUSEIPDB_KEY_FILE: /run/secrets/abuseipdb_key
+    secrets:
+      - telegram_token
+      - telegram_chat_id
+      - abuseipdb_key
+    expose: ["9101"]  # own /metrics - see realtime_alert.py's METRICS_PORT
     volumes:
       - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
       - ./parser/geoip:/geoip:ro
@@ -116,6 +149,12 @@ services:
     env_file: ./notifier/.env
     environment:
       COWRIE_LOG_FILE: /cowrie-log/cowrie.json
+      TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+    secrets:
+      - telegram_token
+      - telegram_chat_id
+    expose: ["9103"]  # own /metrics - see daily_report.py's METRICS_PORT
     volumes:
       - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
       - ./logs/notifier:/logs
@@ -128,6 +167,12 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+      TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+    secrets:
+      - telegram_token
+      - telegram_chat_id
+    expose: ["9104"]  # own /metrics - see telegram_commands.py's METRICS_PORT
     volumes:
       - ./logs/notifier:/logs
     depends_on:
@@ -185,3 +230,22 @@ volumes:
   mongo_data:
   prometheus_data:
   grafana_data:
+
+# Files under ./secrets/ (gitignored - see secrets/README.md for how to
+# create them). Compose bind-mounts each one read-only into the containers
+# that declare it under `secrets:`, at /run/secrets/<name> - this is
+# Compose's standalone (non-swarm) secret support: a real file with tighter
+# permissions than a plain environment variable, and absent from
+# `docker inspect`/`docker compose config` output, but still just a file on
+# this host's disk (not swarm's encrypted secret store) - the honest amount
+# of "secret manager" achievable without adding a whole separate service
+# like Vault for a project this size.
+secrets:
+  jwt_secret_key:
+    file: ./secrets/jwt_secret_key.txt
+  telegram_token:
+    file: ./secrets/telegram_token.txt
+  telegram_chat_id:
+    file: ./secrets/telegram_chat_id.txt
+  abuseipdb_key:
+    file: ./secrets/abuseipdb_key.txt

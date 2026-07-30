@@ -9,9 +9,26 @@ load_dotenv()
 
 logger = get_logger(__name__)
 
-TOKEN     = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
-ABUSE_KEY = os.getenv("ABUSEIPDB_KEY")
+
+def _read_secret(env_name: str):
+    """Reads a secret from <env_name>_FILE (a file path) if set - the
+    convention official Docker images use (e.g. POSTGRES_PASSWORD_FILE)
+    and where this project's docker-compose.yml `secrets:` mounts land
+    (/run/secrets/<name>) - else falls back to the plain env var directly,
+    which is what the native venv workflow's .env file sets. Same helper
+    duplicated in parser/auth.py and notifier/telegram_commands.py rather
+    than shared, consistent with this project's existing small-helper-
+    duplication convention (see CLAUDE.md)."""
+    file_path = os.getenv(f"{env_name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.getenv(env_name)
+
+
+TOKEN     = _read_secret("TELEGRAM_TOKEN")
+CHAT_ID   = _read_secret("TELEGRAM_CHAT_ID")
+ABUSE_KEY = _read_secret("ABUSEIPDB_KEY")
 
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 3

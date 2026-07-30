@@ -11,6 +11,29 @@ scrape_configs:
     static_configs:
       - targets: ["parser-api:8000"]
 
+  # log_watcher.py/cleanup.py/realtime_alert.py/daily_report.py/
+  # telegram_commands.py each expose their own /metrics via
+  # prometheus_client.start_http_server() - see each script's METRICS_PORT.
+  - job_name: honeypot-log-watcher
+    static_configs:
+      - targets: ["parser-log-watcher:9100"]
+
+  - job_name: honeypot-cleanup
+    static_configs:
+      - targets: ["parser-cleanup:9102"]
+
+  - job_name: honeypot-realtime-alert
+    static_configs:
+      - targets: ["notifier-realtime-alert:9101"]
+
+  - job_name: honeypot-daily-report
+    static_configs:
+      - targets: ["notifier-daily-report:9103"]
+
+  - job_name: honeypot-telegram-commands
+    static_configs:
+      - targets: ["notifier-telegram-commands:9104"]
+
   - job_name: mongodb
     static_configs:
       - targets: ["mongodb-exporter:9216"]

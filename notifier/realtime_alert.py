@@ -3,10 +3,14 @@ import os
 import time
 from datetime import datetime, timezone
 from pymongo import MongoClient
+from prometheus_client import start_http_server
 from bot import alert_login_failed, alert_login_success, alert_command
 from notify_log_setup import get_logger
+import notify_metrics
 
 logger = get_logger(__name__)
+
+METRICS_PORT = 9101
 
 # Đường dẫn log Cowrie
 
@@ -106,11 +110,21 @@ def process_event(raw: dict):
         "alerted":         True,
         "created_at":      datetime.now(timezone.utc)
     }
-    collection.insert_one(doc)
+    try:
+        collection.insert_one(doc)
+    except Exception:
+        logger.error(
+            "Failed to insert attack document into MongoDB",
+            exc_info=True, extra={"event": eventid, "ip": ip},
+        )
+        notify_metrics.REALTIME_ALERT_INSERT_ERRORS.inc()
+        return
     logger.info(
         "%s from %s (%s)", eventid, ip, geo["country"],
         extra={"event": eventid, "ip": ip, "session": session},
     )
+    notify_metrics.REALTIME_ALERT_EVENTS_PROCESSED.labels(eventid).inc()
+    notify_metrics.REALTIME_ALERT_LAST_EVENT_TIMESTAMP.set(time.time())
 
     # session closed -> nothing else will reference this session's cache
     if eventid == "cowrie.session.closed":
@@ -124,14 +138,17 @@ def process_event(raw: dict):
     if eventid == "cowrie.login.failed":
         alert_login_failed(ip, username, password, 1)
         logger.info("Sent brute-force Telegram alert", extra={"ip": ip, "event": eventid})
+        notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.login.success":
         alert_login_success(ip, username, password)
         logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
+        notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.command.input":
         alert_command(ip, command)
         logger.info("Sent command-input Telegram alert", extra={"ip": ip, "event": eventid})
+        notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
 def watch_log():
     logger.info("Realtime alert watcher starting, watching %s", LOG_FILE)
@@ -148,6 +165,7 @@ def watch_log():
                 f.close()
                 f = open(LOG_FILE, "r")
                 current_inode = stat.st_ino
+                notify_metrics.REALTIME_ALERT_LOG_ROTATIONS.inc()
             line = f.readline()
             if not line:
                 time.sleep(1)
@@ -165,4 +183,5 @@ def watch_log():
             time.sleep(5)
 
 if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
     watch_log()

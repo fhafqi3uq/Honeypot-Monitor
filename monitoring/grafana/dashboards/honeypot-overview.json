@@ -337,6 +337,400 @@
       ],
       "title": "MongoDB ops/sec",
       "type": "timeseries"
+    },
+    {
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 40,
+      "title": "Watchers & Background Jobs",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "A stalled/crashed watcher stops advancing this - climbing steadily means it's down (see the Layer 8 restart-resilience finding: no persistent read offset, so a restart loses whatever arrived during the downtime window).",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 35
+      },
+      "id": 41,
+      "targets": [
+        {
+          "expr": "time() - honeypot_log_watcher_last_event_timestamp_seconds",
+          "refId": "A"
+        }
+      ],
+      "title": "log_watcher.py: seconds since last event",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 35
+      },
+      "id": 42,
+      "targets": [
+        {
+          "expr": "time() - honeypot_realtime_alert_last_event_timestamp_seconds",
+          "refId": "A"
+        }
+      ],
+      "title": "realtime_alert.py: seconds since last event",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 12,
+        "y": 35
+      },
+      "id": 43,
+      "targets": [
+        {
+          "expr": "sum(honeypot_log_watcher_log_rotations_total) + sum(honeypot_realtime_alert_log_rotations_total)",
+          "refId": "A"
+        }
+      ],
+      "title": "Log rotations detected (both watchers)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 16,
+        "y": 35
+      },
+      "id": 44,
+      "targets": [
+        {
+          "expr": "sum(honeypot_log_watcher_insert_errors_total) + sum(honeypot_realtime_alert_insert_errors_total)",
+          "refId": "A"
+        }
+      ],
+      "title": "Watcher insert errors (both)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 20,
+        "y": 35
+      },
+      "id": 45,
+      "targets": [
+        {
+          "expr": "sum(rate(honeypot_telegram_alerts_sent_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Telegram alerts dispatched (rate)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 41
+      },
+      "id": 46,
+      "targets": [
+        {
+          "expr": "sum by (event) (rate(honeypot_log_watcher_events_processed_total[5m]))",
+          "legendFormat": "{{event}}",
+          "refId": "A"
+        }
+      ],
+      "title": "log_watcher.py events processed/sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 41
+      },
+      "id": 47,
+      "targets": [
+        {
+          "expr": "sum by (event) (rate(honeypot_realtime_alert_events_processed_total[5m]))",
+          "legendFormat": "{{event}}",
+          "refId": "A"
+        }
+      ],
+      "title": "realtime_alert.py events processed/sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 41
+      },
+      "id": 48,
+      "targets": [
+        {
+          "expr": "honeypot_telegram_commands_processed_total",
+          "legendFormat": "{{command}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Telegram bot commands processed",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 0,
+        "y": 48
+      },
+      "id": 49,
+      "targets": [
+        {
+          "expr": "honeypot_cleanup_runs_total",
+          "refId": "A"
+        }
+      ],
+      "title": "cleanup.py: runs total",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 4,
+        "y": 48
+      },
+      "id": 50,
+      "targets": [
+        {
+          "expr": "honeypot_cleanup_deleted_total",
+          "refId": "A"
+        }
+      ],
+      "title": "cleanup.py: docs deleted (total)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 8,
+        "y": 48
+      },
+      "id": 51,
+      "targets": [
+        {
+          "expr": "honeypot_daily_report_runs_total",
+          "refId": "A"
+        }
+      ],
+      "title": "daily_report.py: runs total",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 12,
+        "y": 48
+      },
+      "id": 52,
+      "targets": [
+        {
+          "expr": "honeypot_daily_report_send_failures_total",
+          "refId": "A"
+        }
+      ],
+      "title": "daily_report.py: send failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 48
+      },
+      "id": 53,
+      "targets": [
+        {
+          "expr": "honeypot_telegram_commands_rejected_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Telegram commands rejected (unauthorized chat)",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

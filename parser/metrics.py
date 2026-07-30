@@ -15,7 +15,7 @@ monitoring endpoint.
 
 from __future__ import annotations
 
-from prometheus_client import REGISTRY, Counter, Histogram
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
 HTTP_REQUESTS = Counter(
     "honeypot_http_requests_total",
@@ -38,6 +38,47 @@ LOGIN_ATTEMPTS = Counter(
 API_RATE_LIMIT_REJECTIONS = Counter(
     "honeypot_api_rate_limit_rejections_total",
     "Requests rejected by the generic per-IP /api/* rate limit (auth.check_api_rate_limit)",
+)
+
+# --- log_watcher.py (exposed on its own /metrics via start_http_server, see
+# log_watcher.py's __main__ block - it's not an HTTP server otherwise) -----
+# Metric names are prefixed "log_watcher_", not just "watcher_", specifically
+# so they can't collide with notifier/notify_metrics.py's realtime_alert_*
+# equivalents - tests/test_alerting.py's schema-consistency test imports
+# both log_watcher.py and realtime_alert.py into the SAME process, and
+# prometheus_client's default registry is a process-wide singleton that
+# rejects two different Counter objects registered under the same name,
+# even though in production these always run as separate processes.
+LOG_WATCHER_EVENTS_PROCESSED = Counter(
+    "honeypot_log_watcher_events_processed_total",
+    "Cowrie events successfully inserted into MongoDB by log_watcher.py",
+    ["event"],
+)
+LOG_WATCHER_INSERT_ERRORS = Counter(
+    "honeypot_log_watcher_insert_errors_total",
+    "MongoDB insert failures encountered by log_watcher.py",
+)
+LOG_WATCHER_LAST_EVENT_TIMESTAMP = Gauge(
+    "honeypot_log_watcher_last_event_timestamp_seconds",
+    "Unix timestamp log_watcher.py last processed a Cowrie event - a "
+    "stalled or crashed watcher stops advancing this (see the Layer 8 "
+    "restart-resilience test plan finding: no persistent read offset means "
+    "a restart loses whatever arrived during the downtime window)",
+)
+LOG_WATCHER_LOG_ROTATIONS = Counter(
+    "honeypot_log_watcher_log_rotations_total",
+    "Times log_watcher.py detected and recovered from a Cowrie log rotation",
+)
+
+# --- cleanup.py (also exposed on its own /metrics) -------------------------
+CLEANUP_RUNS = Counter(
+    "honeypot_cleanup_runs_total", "Number of times the 30-day retention cleanup job has run"
+)
+CLEANUP_DELETED_TOTAL = Counter(
+    "honeypot_cleanup_deleted_total", "Total attack documents deleted by the cleanup job"
+)
+CLEANUP_LAST_RUN_TIMESTAMP = Gauge(
+    "honeypot_cleanup_last_run_timestamp_seconds", "Unix timestamp of the last cleanup run"
 )
 
 _current_mongo_stats_collector = None

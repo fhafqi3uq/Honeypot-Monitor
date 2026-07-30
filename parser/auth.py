@@ -51,12 +51,30 @@ import metrics
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+
+def _read_secret(env_name: str) -> Optional[str]:
+    """Reads a secret from <env_name>_FILE (a file path) if set - the
+    convention official Docker images use (e.g. POSTGRES_PASSWORD_FILE)
+    and where this project's docker-compose.yml `secrets:` mounts land
+    (/run/secrets/<name>) - else falls back to the plain env var directly,
+    which is what the native venv workflow's .env file sets. Same helper
+    duplicated in notifier/bot.py and notifier/telegram_commands.py rather
+    than shared, consistent with this project's existing small-helper-
+    duplication convention (see CLAUDE.md)."""
+    file_path = os.getenv(f"{env_name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.getenv(env_name)
+
+
+SECRET_KEY = _read_secret("JWT_SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError(
         "JWT_SECRET_KEY is not set. Generate one with:\n"
         "  python -c \"import secrets; print(secrets.token_hex(32))\"\n"
-        "and put it in parser/.env as JWT_SECRET_KEY=<value>."
+        "and put it in parser/.env as JWT_SECRET_KEY=<value> (native venv "
+        "workflow), or in secrets/jwt_secret_key.txt (Docker Compose)."
     )
 
 ALGORITHM = "HS256"

@@ -118,9 +118,17 @@ tạp hơn nhiều, không đáng để làm chung đợt này).
 #    khi file xuất hiện.
 cd honeypot/cowrie-src && source cowrie-env/bin/activate && cowrie-env/bin/cowrie start && cd ../..
 
-# 2. Tạo .env cho parser/ và notifier/ (giống hệt yêu cầu ở Bước 4/6)
-cp parser/.env.example parser/.env       # điền JWT_SECRET_KEY
-cp notifier/.env.example notifier/.env   # điền TELEGRAM_TOKEN/TELEGRAM_CHAT_ID
+# 2. Tạo .env cho parser/ và notifier/ (chỉ cần MONGO_URL/DB_NAME/DASHBOARD_ORIGIN
+#    khi chạy Docker - secrets thật đi qua bước 2b bên dưới, không qua .env)
+cp parser/.env.example parser/.env
+cp notifier/.env.example notifier/.env
+
+# 2b. Tạo secrets/ (bắt buộc - xem secrets/README.md để biết chi tiết từng file)
+mkdir -p secrets
+python3 -c "import secrets; print(secrets.token_hex(32))" > secrets/jwt_secret_key.txt
+echo -n "<TELEGRAM_TOKEN của bạn>"   > secrets/telegram_token.txt
+echo -n "<TELEGRAM_CHAT_ID của bạn>" > secrets/telegram_chat_id.txt
+echo -n "<ABUSEIPDB_KEY của bạn>"    > secrets/abuseipdb_key.txt   # để trống file cũng được
 
 # 3. Tải GeoIP database vào parser/geoip/ (giống Bước 4) nếu chưa có
 
@@ -129,7 +137,9 @@ docker compose up -d --build
 
 # API:        http://localhost:8000 (127.0.0.1 only)
 # Dashboard:  http://localhost:8080 (127.0.0.1 only)
-# Prometheus: http://localhost:9090 (127.0.0.1 only)
+# Prometheus: http://localhost:9090 (127.0.0.1 only) - theo dõi cả parser-api
+#             lẫn 5 script nền (log_watcher/cleanup/realtime_alert/
+#             daily_report/telegram_commands), mỗi cái tự expose /metrics riêng.
 # Grafana:    http://localhost:3000 (127.0.0.1 only) - đăng nhập admin/admin
 #             (đổi ngay, hoặc set GRAFANA_ADMIN_PASSWORD trước khi lên) -
 #             dashboard "Honeypot Monitor - Overview" đã tự nạp sẵn.

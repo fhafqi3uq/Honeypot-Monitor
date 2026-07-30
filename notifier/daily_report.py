@@ -5,10 +5,14 @@ import schedule
 import time
 from datetime import datetime
 from collections import Counter
+from prometheus_client import start_http_server
 from bot import send_message
 from notify_log_setup import get_logger
+import notify_metrics
 
 logger = get_logger(__name__)
+
+METRICS_PORT = 9103
 
 def _esc(value) -> str:
     """html.escape() attacker-controlled fields before they land in a
@@ -81,6 +85,7 @@ def process_logs():
 
 def send_daily_report():
     logger.info("Compiling daily report for %s", datetime.now().strftime('%d/%m/%Y'))
+    notify_metrics.DAILY_REPORT_RUNS.inc()
     data = process_logs()
 
     if not data:
@@ -124,13 +129,16 @@ def send_daily_report():
 
     if send_message(msg):
         logger.info("Daily report sent to Telegram")
+        notify_metrics.DAILY_REPORT_LAST_SUCCESS_TIMESTAMP.set(time.time())
     else:
         logger.error("Failed to send daily report to Telegram")
+        notify_metrics.DAILY_REPORT_SEND_FAILURES.inc()
 
 # Lập lịch 8h sáng mỗi ngày
 schedule.every().day.at("08:00").do(send_daily_report)
 
 if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
     logger.info("Daily report scheduler starting, scheduled for 08:00 daily")
 
     # Test ngay

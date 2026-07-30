@@ -4,11 +4,33 @@ import requests
 import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
+from prometheus_client import start_http_server
 from notify_log_setup import get_logger
+import notify_metrics
 
 load_dotenv()
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+
+def _read_secret(env_name: str):
+    """Reads a secret from <env_name>_FILE (a file path) if set - the
+    convention official Docker images use (e.g. POSTGRES_PASSWORD_FILE)
+    and where this project's docker-compose.yml `secrets:` mounts land
+    (/run/secrets/<name>) - else falls back to the plain env var directly,
+    which is what the native venv workflow's .env file sets. Same helper
+    duplicated in parser/auth.py and notifier/bot.py rather than shared,
+    consistent with this project's existing small-helper-duplication
+    convention (see CLAUDE.md)."""
+    file_path = os.getenv(f"{env_name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.getenv(env_name)
+
+
+TOKEN = _read_secret("TELEGRAM_TOKEN")
+CHAT_ID = _read_secret("TELEGRAM_CHAT_ID")
+
+METRICS_PORT = 9104
 
 logger = get_logger(__name__)
 
@@ -70,16 +92,21 @@ def process_update(update):
     if str(sender_chat_id) != str(CHAT_ID):
         if text:
             logger.warning("Rejected Telegram command from unauthorized chat")
+            notify_metrics.TELEGRAM_COMMANDS_REJECTED.inc()
         return
 
     if text == "/stats":
         send_message(get_stats())
+        notify_metrics.TELEGRAM_COMMANDS_PROCESSED.labels("stats").inc()
     elif text == "/top":
         send_message(get_top_ips())
+        notify_metrics.TELEGRAM_COMMANDS_PROCESSED.labels("top").inc()
     elif text == "/brute":
         send_message(get_recent_brute())
+        notify_metrics.TELEGRAM_COMMANDS_PROCESSED.labels("brute").inc()
     elif text == "/help":
         send_message("❓ <b>DANH SÁCH LỆNH:</b>\n/stats - Thống kê\n/top - Top IP\n/brute - Log thử pass\n/help - Hỗ trợ")
+        notify_metrics.TELEGRAM_COMMANDS_PROCESSED.labels("help").inc()
 
 
 def handle_commands():
@@ -97,4 +124,5 @@ def handle_commands():
         time.sleep(1)
 
 if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
     handle_commands()

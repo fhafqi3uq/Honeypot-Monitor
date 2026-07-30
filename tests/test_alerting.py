@@ -511,3 +511,44 @@ class TestSchemaConsistency:
 
         assert lw_doc["alerted"] is False
         assert ra_doc["alerted"] is True
+
+
+# ---------------------------------------------------------------------------
+# Docker Compose `secrets:` support: TELEGRAM_TOKEN/CHAT_ID can come from a
+# file (TELEGRAM_TOKEN_FILE) instead of a plain env var - see bot.py's
+# _read_secret(). telegram_commands.py duplicates the same helper.
+# ---------------------------------------------------------------------------
+class TestSecretFileConvention:
+    def test_secrets01_bot_reads_telegram_token_from_file_when_set(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        token_file = tmp_path / "telegram_token.txt"
+        token_file.write_text("token-from-a-mounted-file\n")
+        monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+        monkeypatch.setenv("TELEGRAM_TOKEN_FILE", str(token_file))
+
+        bot = fresh_module("bot")
+
+        assert bot.TOKEN == "token-from-a-mounted-file"
+
+    def test_secrets02_bot_falls_back_to_plain_env_var_when_no_file_set(
+        self, fresh_module, monkeypatch
+    ):
+        monkeypatch.delenv("TELEGRAM_TOKEN_FILE", raising=False)
+        monkeypatch.setenv("TELEGRAM_TOKEN", "plain-env-var-token")
+
+        bot = fresh_module("bot")
+
+        assert bot.TOKEN == "plain-env-var-token"
+
+    def test_secrets03_telegram_commands_also_reads_from_file(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        chat_id_file = tmp_path / "telegram_chat_id.txt"
+        chat_id_file.write_text("987654321")
+        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+        monkeypatch.setenv("TELEGRAM_CHAT_ID_FILE", str(chat_id_file))
+
+        telegram_commands = fresh_module("telegram_commands")
+
+        assert telegram_commands.CHAT_ID == "987654321"

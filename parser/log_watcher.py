@@ -3,10 +3,14 @@ import time
 import os
 from datetime import datetime, timezone
 from pymongo import MongoClient
+from prometheus_client import start_http_server
 from geoip_lookup import get_geo
 from log_setup import get_logger
+import metrics
 
 logger = get_logger(__name__)
+
+METRICS_PORT = 9100
 
 client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
 db         = client[os.getenv("DB_NAME", "honeypot")]
@@ -105,6 +109,7 @@ def watch_log():
             f.close()
             f = open(LOG_FILE, "r")
             current_inode = stat.st_ino
+            metrics.LOG_WATCHER_LOG_ROTATIONS.inc()
         line = f.readline()
         if not line:
             time.sleep(1)
@@ -123,13 +128,17 @@ def watch_log():
                         "%s from %s (%s)", doc["event"], doc["src_ip"], doc["country"],
                         extra={"event": doc["event"], "ip": doc["src_ip"], "session": doc["session"]},
                     )
+                    metrics.LOG_WATCHER_EVENTS_PROCESSED.labels(doc["event"]).inc()
+                    metrics.LOG_WATCHER_LAST_EVENT_TIMESTAMP.set(time.time())
                 except Exception:
                     logger.error(
                         "Failed to insert attack document into MongoDB",
                         exc_info=True, extra={"event": doc["event"], "ip": doc["src_ip"]},
                     )
+                    metrics.LOG_WATCHER_INSERT_ERRORS.inc()
         except json.JSONDecodeError:
             continue
 
 if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
     watch_log()
