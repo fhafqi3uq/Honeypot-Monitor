@@ -291,6 +291,41 @@ class TestCleanup:
         remaining = list(cleanup.collection.find({}, {"_id": 0, "session": 1}))
         assert remaining == [{"session": "recent"}]
 
+    def test_pl13b_prunes_old_rotated_cowrie_log_files_only(self, fresh_module, tmp_path, monkeypatch):
+        """
+        Cowrie itself (logtype = rotating) rotates cowrie.log/cowrie.json to
+        a dated suffix every midnight forever with no built-in retention of
+        its own - only the Mongo copy was ever pruned. cleanup_old_cowrie_log_files()
+        closes that gap: old rotated files get deleted, the live (no date
+        suffix) files are never touched regardless of age.
+        """
+        live_json = tmp_path / "cowrie.json"
+        live_log = tmp_path / "cowrie.log"
+        old_json = tmp_path / "cowrie.json.2020-01-01"
+        old_log = tmp_path / "cowrie.log.2020-01-01"
+        recent_json = tmp_path / "cowrie.json.2026-07-29"
+        for f in (live_json, live_log, old_json, old_log, recent_json):
+            f.write_text("{}\n")
+
+        old_epoch = time.time() - 45 * 86400
+        recent_epoch = time.time() - 5 * 86400
+        os.utime(old_json, (old_epoch, old_epoch))
+        os.utime(old_log, (old_epoch, old_epoch))
+        os.utime(recent_json, (recent_epoch, recent_epoch))
+        # Live files would legitimately be much older than 30 days too (they
+        # only get replaced at the next midnight rotation) - proves they're
+        # excluded by name, not by luckily looking "recent".
+        os.utime(live_json, (old_epoch, old_epoch))
+        os.utime(live_log, (old_epoch, old_epoch))
+
+        monkeypatch.setenv("COWRIE_LOG_FILE", str(live_json))
+        cleanup = fresh_module("cleanup")
+
+        cleanup.cleanup_old_cowrie_log_files()
+
+        remaining = {p.name for p in tmp_path.iterdir()}
+        assert remaining == {"cowrie.json", "cowrie.log", "cowrie.json.2026-07-29"}
+
 
 # ---------------------------------------------------------------------------
 # PL-14: parser.py's import_log_file() (batch import, not tailing)

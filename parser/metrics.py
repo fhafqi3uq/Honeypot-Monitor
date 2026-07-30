@@ -81,6 +81,15 @@ CLEANUP_DELETED_TOTAL = Counter(
 CLEANUP_LAST_RUN_TIMESTAMP = Gauge(
     "honeypot_cleanup_last_run_timestamp_seconds", "Unix timestamp of the last cleanup run"
 )
+CLEANUP_COWRIE_LOG_FILES_DELETED_TOTAL = Counter(
+    "honeypot_cleanup_cowrie_log_files_deleted_total",
+    "Rotated Cowrie cowrie.log.*/cowrie.json.* files deleted by the cleanup job "
+    "(the live cowrie.log/cowrie.json files are never touched)",
+)
+CLEANUP_COWRIE_LOG_BYTES_DELETED_TOTAL = Counter(
+    "honeypot_cleanup_cowrie_log_bytes_deleted_total",
+    "Total bytes freed by deleting old rotated Cowrie log files",
+)
 
 _current_mongo_stats_collector = None
 
