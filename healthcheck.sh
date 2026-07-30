@@ -45,8 +45,7 @@ check_and_restart() {
     fi
 }
 
-#
- Kiểm tra từng service
+# Kiểm tra từng service
 check_and_restart "MongoDB" \
     "systemctl is-active --quiet mongod" \
     "sudo systemctl start mongod"
