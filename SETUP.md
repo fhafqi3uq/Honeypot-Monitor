@@ -127,8 +127,12 @@ cp notifier/.env.example notifier/.env   # điền TELEGRAM_TOKEN/TELEGRAM_CHAT_
 # 4. Build và chạy
 docker compose up -d --build
 
-# API:       http://localhost:8000 (127.0.0.1 only)
-# Dashboard: http://localhost:8080 (127.0.0.1 only)
+# API:        http://localhost:8000 (127.0.0.1 only)
+# Dashboard:  http://localhost:8080 (127.0.0.1 only)
+# Prometheus: http://localhost:9090 (127.0.0.1 only)
+# Grafana:    http://localhost:3000 (127.0.0.1 only) - đăng nhập admin/admin
+#             (đổi ngay, hoặc set GRAFANA_ADMIN_PASSWORD trước khi lên) -
+#             dashboard "Honeypot Monitor - Overview" đã tự nạp sẵn.
 ```
 
 Ghi chú: MongoDB trong Compose hiện **chưa bật authentication** (giống hệt

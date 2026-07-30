@@ -47,6 +47,8 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+import metrics
+
 load_dotenv()
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
@@ -390,6 +392,7 @@ def check_api_rate_limit(request: Request) -> None:
         return_document=ReturnDocument.AFTER,
     )
     if doc["count"] > API_RATE_LIMIT_MAX_REQUESTS:
+        metrics.API_RATE_LIMIT_REJECTIONS.inc()
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Quá nhiều yêu cầu, vui lòng thử lại sau ít phút.",

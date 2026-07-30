@@ -23,6 +23,13 @@
 # start.sh setup's security posture (an unauthenticated port reachable from
 # the same public interface as the honeypot would tell any port-scanning
 # attacker this is a monitored system).
+#
+# Observability: mongodb-exporter + prometheus + grafana. parser-api exposes
+# its own /metrics (see parser/metrics.py, parser/main.py) - no separate
+# exporter needed for the app layer. Grafana auto-provisions the Prometheus
+# datasource and a starter "Honeypot Monitor - Overview" dashboard from
+# monitoring/grafana/ - open http://localhost:3000 (admin / admin by
+# default, change GRAFANA_ADMIN_PASSWORD before a real deployment).
 
 services:
   mongo:
@@ -134,5 +141,47 @@ services:
       - "127.0.0.1:8080:80"
     restart: unless-stopped
 
+  # --- Observability (Prometheus/Grafana) -----------------------------------
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.44
+    command:
+      - "--mongodb.uri=mongodb://mongo:27017"
+      - "--collector.diagnosticdata"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - parser-api
+      - mongodb-exporter
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.1
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Change on first login (or set GRAFANA_ADMIN_PASSWORD in your shell
+      # before `docker compose up`) - this default is fine for a
+      # 127.0.0.1-only dev/demo instance, not for a real public deployment.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   mongo_data:
+  prometheus_data:
+  grafana_data:

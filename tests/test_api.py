@@ -16,6 +16,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from prometheus_client.parser import text_string_to_metric_families
 
 
 def _login(fresh_app, username="admin", password="Pass123!Aa"):
@@ -339,6 +340,89 @@ class TestContentType:
             headers={"Content-Type": "text/plain"},
         )
         assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /metrics: Prometheus scrape endpoint (parser/metrics.py, parser/main.py)
+# ---------------------------------------------------------------------------
+def _metric_value(metrics_text, name, labels=None):
+    labels = labels or {}
+    for family in text_string_to_metric_families(metrics_text):
+        for sample in family.samples:
+            if sample.name == name and all(sample.labels.get(k) == v for k, v in labels.items()):
+                return sample.value
+    return None
+
+
+class TestMetricsEndpoint:
+    def test_metrics01_reachable_without_login(self, fresh_app):
+        """Prometheus has no way to authenticate against this app's JWT/
+        cookie flow, so /metrics must stay reachable with no session."""
+        client, main, auth = fresh_app
+        r = client.get("/metrics")
+        assert r.status_code == 200
+
+    def test_metrics02_not_subject_to_the_generic_api_rate_limit(self, fresh_app, monkeypatch):
+        """/metrics is registered directly on `app`, not api_router, so it
+        must never 429 regardless of how exhausted the /api/* rate limit
+        budget is."""
+        client, main, auth = fresh_app
+        monkeypatch.setattr(auth, "API_RATE_LIMIT_MAX_REQUESTS", 0)
+
+        statuses = [client.get("/metrics").status_code for _ in range(5)]
+
+        assert statuses == [200] * 5
+
+    def test_metrics03_includes_expected_metric_families(self, fresh_app):
+        client, main, auth = fresh_app
+        text = client.get("/metrics").text
+        for expected in (
+            "honeypot_http_requests_total",
+            "honeypot_http_request_duration_seconds",
+            "honeypot_login_attempts_total",
+            "honeypot_api_rate_limit_rejections_total",
+            "honeypot_attacks_total",
+            "honeypot_attacks_by_event_total",
+            "honeypot_pending_alerts",
+        ):
+            assert expected in text, f"{expected} missing from /metrics output"
+
+    def test_metrics04_login_attempts_counter_increments_by_result(self, fresh_app):
+        """Metric counters are process-wide singletons that persist across
+        every test in the session (not reset per test), so this asserts
+        the DELTA from one login of each kind, not an absolute value."""
+        client, main, auth = fresh_app
+        auth.users_col.insert_one(
+            {"username": "admin", "password_hash": auth.hash_password("Pass123!Aa"), "created_at": auth._now()}
+        )
+        before = client.get("/metrics").text
+        before_failed = _metric_value(before, "honeypot_login_attempts_total", {"result": "failed"}) or 0
+        before_success = _metric_value(before, "honeypot_login_attempts_total", {"result": "success"}) or 0
+
+        client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+        client.post("/auth/login", json={"username": "admin", "password": "Pass123!Aa"})
+
+        after = client.get("/metrics").text
+        assert _metric_value(after, "honeypot_login_attempts_total", {"result": "failed"}) == before_failed + 1
+        assert _metric_value(after, "honeypot_login_attempts_total", {"result": "success"}) == before_success + 1
+
+    def test_metrics05_pending_alerts_gauge_reflects_current_mongo_state(self, fresh_app):
+        """Unlike the counters above, this is a Gauge computed live from
+        Mongo at scrape time (see main.py's _MongoStatsCollector) - each
+        fresh_app gets its own isolated mongomock database, so this can
+        assert an exact value rather than a delta."""
+        client, main, auth = fresh_app
+        main.collection.insert_many(
+            [
+                {"event": "cowrie.login.failed", "alerted": False},
+                {"event": "cowrie.login.failed", "alerted": False},
+                {"event": "cowrie.login.success", "alerted": True},
+            ]
+        )
+
+        text = client.get("/metrics").text
+
+        assert _metric_value(text, "honeypot_pending_alerts") == 2
 
 
 # ---------------------------------------------------------------------------

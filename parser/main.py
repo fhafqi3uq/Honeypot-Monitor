@@ -1,14 +1,19 @@
 import os
+import time
 
 from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
+from prometheus_client.core import GaugeMetricFamily
+from prometheus_client.registry import Collector
 from pymongo import MongoClient
 from typing import Optional
 import io, csv
 
 import auth
+import metrics
 from log_setup import get_logger
 
 logger = get_logger(__name__)
@@ -57,6 +62,64 @@ logger.info(
 COOKIE_KWARGS = {"httponly": True, "samesite": "lax", "secure": False, "path": "/"}
 
 
+# --- Prometheus metrics -----------------------------------------------------
+# Hand-rolled rather than using prometheus-fastapi-instrumentator: that
+# library's current release requires a newer starlette than the version
+# fastapi==0.115.0 (pinned above) needs, and pulling it in broke that pin -
+# a plain ASGI middleware + prometheus_client is little enough code that
+# it's not worth the dependency conflict.
+@app.middleware("http")
+async def _prometheus_metrics_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration = time.perf_counter() - start
+    # request.url.path is safe to use as a label as-is (not a template like
+    # "/api/search/{id}") - every route in this API takes query params, not
+    # path params, so there's no per-ID cardinality explosion risk here.
+    path = request.url.path
+    metrics.HTTP_REQUESTS.labels(request.method, path, response.status_code).inc()
+    metrics.HTTP_REQUEST_DURATION_SECONDS.labels(request.method, path).observe(duration)
+    return response
+
+
+class _MongoStatsCollector(Collector):
+    """Queries MongoDB live on every Prometheus scrape rather than caching
+    a value - scrapes are infrequent (Prometheus' default is every 15s) and
+    these are simple indexed count_documents() calls, cheap enough to run
+    on demand instead of adding a background refresh loop."""
+
+    def collect(self):
+        total = GaugeMetricFamily(
+            "honeypot_attacks_total", "Total attack documents in MongoDB"
+        )
+        total.add_metric([], collection.count_documents({}))
+        yield total
+
+        by_event = GaugeMetricFamily(
+            "honeypot_attacks_by_event_total",
+            "Attack documents by Cowrie event type",
+            labels=["event"],
+        )
+        for event in ("cowrie.login.failed", "cowrie.login.success", "cowrie.command.input"):
+            by_event.add_metric([event], collection.count_documents({"event": event}))
+        yield by_event
+
+        pending = GaugeMetricFamily(
+            "honeypot_pending_alerts",
+            "Attack documents not yet marked alerted=True (queue depth for /api/alerts/pending)",
+        )
+        pending.add_metric([], collection.count_documents({"alerted": False}))
+        yield pending
+
+
+metrics.register_mongo_stats_collector(_MongoStatsCollector())
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics_endpoint():
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -72,6 +135,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
     if not auth.authenticate_user(payload.username, payload.password):
         auth.record_failed_attempt(ip, payload.username)
         auth.log_auth_event(ip, payload.username, success=False, user_agent=user_agent)
+        metrics.LOGIN_ATTEMPTS.labels("failed").inc()
         logger.warning(
             "Failed login attempt for user '%s'", payload.username,
             extra={"ip": ip, "username": payload.username, "endpoint": "/auth/login"},
@@ -81,6 +145,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
 
     auth.reset_attempts(ip, payload.username)
     auth.log_auth_event(ip, payload.username, success=True, user_agent=user_agent)
+    metrics.LOGIN_ATTEMPTS.labels("success").inc()
     logger.info(
         "Successful login for user '%s'", payload.username,
         extra={"ip": ip, "username": payload.username, "endpoint": "/auth/login"},

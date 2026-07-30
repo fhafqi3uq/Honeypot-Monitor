@@ -7,3 +7,4 @@ requests==2.32.5
 bcrypt==5.0.0
 pyjwt==2.13.0
 schedule==1.2.2
+prometheus-client==0.26.0

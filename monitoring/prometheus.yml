@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: honeypot-parser-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["parser-api:8000"]
+
+  - job_name: mongodb
+    static_configs:
+      - targets: ["mongodb-exporter:9216"]
