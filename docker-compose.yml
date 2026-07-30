@@ -10,10 +10,12 @@
 #   cp parser/.env.example parser/.env       # MONGO_URL/DB_NAME/DASHBOARD_ORIGIN
 #   cp notifier/.env.example notifier/.env   # same, plus native-workflow secrets
 #   mkdir -p parser/geoip && download GeoLite2-City.mmdb there (see SETUP.md)
-#   see secrets/README.md for the 6 secret files this stack actually reads
+#   see secrets/README.md for the 8 secret files this stack actually reads
 #   its credentials from (JWT_SECRET_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-#   ABUSEIPDB_KEY, MONGO_USERNAME, MONGO_PASSWORD) - NOT plaintext .env, see
-#   the `secrets:` block below.
+#   ABUSEIPDB_KEY, MONGO_USERNAME/MONGO_PASSWORD - root, admin work only -
+#   and MONGO_APP_USERNAME/MONGO_APP_PASSWORD - the least-privilege user
+#   every app service actually connects as) - NOT plaintext .env, see the
+#   `secrets:` block below.
 #
 # Start Cowrie natively FIRST (or at least once, so its log file exists) -
 # the log-watcher/realtime-alert containers below stat() that file at
@@ -53,20 +55,25 @@
 # plaintext-in-.env without needing a whole extra service like Vault for a
 # project this size.
 #
-# Mongo authentication: the mongo service bootstraps ONE root-level user
-# from mongo_username/mongo_password (MONGO_INITDB_ROOT_USERNAME_FILE/
+# Mongo authentication: the mongo service bootstraps a ROOT user from
+# mongo_username/mongo_password (MONGO_INITDB_ROOT_USERNAME_FILE/
 # _PASSWORD_FILE - officially supported by the mongo image) on first start
-# with an empty data volume; every app service connects as that SAME user
-# via MONGO_USERNAME_FILE/MONGO_PASSWORD_FILE (see each file's
-# _mongo_auth_kwargs()). This is NOT least-privilege (a real production
-# setup would give the app a narrower readWrite-only user on just the
-# "honeypot" database, not the root account) - a known, accepted
-# simplification for this project's scope, flagged here rather than left
-# as a silent gap. mongodb-exporter is the one exception that can't use the
-# secrets:/_FILE mechanism (its own CLI has no such convention) - it reads
-# MONGODB_USER/MONGODB_PASSWORD as plain env vars from secrets/
-# mongodb_exporter.env (gitignored, plain KEY=value - not committed, just
-# not file-mounted either) instead.
+# with an empty data volume - that root account is for genuine admin work
+# only (backups, manual mongosh troubleshooting, mongodb-exporter's own
+# clusterMonitor-level metrics access), never used by the app itself.
+# mongo-init/create-app-user.sh (auto-run once, same first-start-only
+# window, via the image's docker-entrypoint-initdb.d convention) creates a
+# SEPARATE least-privilege user - readWrite on just the "honeypot"
+# database - from mongo_app_username/mongo_app_password; every app service
+# connects as THAT user via MONGO_USERNAME_FILE/MONGO_PASSWORD_FILE (see
+# each file's _mongo_auth_kwargs()), so a compromised app container can't
+# touch other databases or run admin commands. mongodb-exporter is the one
+# exception that can't use the secrets:/_FILE mechanism (its own CLI has no
+# such convention) - it reads MONGODB_USER/MONGODB_PASSWORD as plain env
+# vars from secrets/mongodb_exporter.env (gitignored, plain KEY=value - not
+# committed, just not file-mounted either), set to the ROOT credentials
+# (not the scoped app user - mongodb-exporter's own diagnosticdata
+# collector needs clusterMonitor, broader than readWrite-on-one-database).
 #
 # IMPORTANT: auth only takes effect on a mongo container's FIRST start with
 # an empty ./data/db volume - if you already have a running stack from
@@ -80,11 +87,19 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME_FILE: /run/secrets/mongo_username
       MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_INITDB_DATABASE: honeypot
+      # Read by mongo-init/create-app-user.sh, NOT by mongod/the base image
+      # itself - our own convention, not an officially-documented one.
+      MONGO_APP_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_APP_PASSWORD_FILE: /run/secrets/mongo_app_password
     secrets:
       - mongo_username
       - mongo_password
+      - mongo_app_username
+      - mongo_app_password
     volumes:
       - mongo_data:/data/db
+      - ./mongo-init/create-app-user.sh:/docker-entrypoint-initdb.d/create-app-user.sh:ro
     ports:
       - "127.0.0.1:27017:27017"
     healthcheck:
@@ -114,13 +129,14 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
       JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret_key
-      MONGO_USERNAME_FILE: /run/secrets/mongo_username
-      MONGO_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
     secrets:
       - jwt_secret_key
-      - mongo_username
-      - mongo_password
+      - mongo_app_username
+      - mongo_app_password
     volumes:
       # log_setup.py resolves its log directory to /logs inside this image
       # (2 levels up from /app/log_setup.py) - see CLAUDE.md if this looks
@@ -138,12 +154,13 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
       COWRIE_LOG_FILE: /cowrie-log/cowrie.json
-      MONGO_USERNAME_FILE: /run/secrets/mongo_username
-      MONGO_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
     secrets:
-      - mongo_username
-      - mongo_password
+      - mongo_app_username
+      - mongo_app_password
     expose: ["9100"]  # own /metrics - see log_watcher.py's METRICS_PORT
     volumes:
       - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
@@ -161,11 +178,12 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
-      MONGO_USERNAME_FILE: /run/secrets/mongo_username
-      MONGO_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_AUTH_SOURCE: honeypot
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
     secrets:
-      - mongo_username
-      - mongo_password
+      - mongo_app_username
+      - mongo_app_password
     expose: ["9102"]  # own /metrics - see cleanup.py's METRICS_PORT
     depends_on:
       mongo:
@@ -179,19 +197,20 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
       COWRIE_LOG_FILE: /cowrie-log/cowrie.json
       GEOIP_DB_PATH: /geoip/GeoLite2-City.mmdb
       TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
       TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
       ABUSEIPDB_KEY_FILE: /run/secrets/abuseipdb_key
-      MONGO_USERNAME_FILE: /run/secrets/mongo_username
-      MONGO_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
     secrets:
       - telegram_token
       - telegram_chat_id
       - abuseipdb_key
-      - mongo_username
-      - mongo_password
+      - mongo_app_username
+      - mongo_app_password
     expose: ["9101"]  # own /metrics - see realtime_alert.py's METRICS_PORT
     volumes:
       - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
@@ -226,15 +245,16 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
       TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
       TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
-      MONGO_USERNAME_FILE: /run/secrets/mongo_username
-      MONGO_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
     secrets:
       - telegram_token
       - telegram_chat_id
-      - mongo_username
-      - mongo_password
+      - mongo_app_username
+      - mongo_app_password
     expose: ["9104"]  # own /metrics - see telegram_commands.py's METRICS_PORT
     volumes:
       - ./logs/notifier:/logs
@@ -323,3 +343,7 @@ secrets:
     file: ./secrets/mongo_username.txt
   mongo_password:
     file: ./secrets/mongo_password.txt
+  mongo_app_username:
+    file: ./secrets/mongo_app_username.txt
+  mongo_app_password:
+    file: ./secrets/mongo_app_password.txt

@@ -130,16 +130,28 @@ echo -n "<TELEGRAM_TOKEN của bạn>"   > secrets/telegram_token.txt
 echo -n "<TELEGRAM_CHAT_ID của bạn>" > secrets/telegram_chat_id.txt
 echo -n "<ABUSEIPDB_KEY của bạn>"    > secrets/abuseipdb_key.txt   # để trống file cũng được
 
-# Mật khẩu MongoDB - chỉ có tác dụng lúc mongo container khởi động LẦN ĐẦU
-# với volume dữ liệu rỗng (đổi sau này không có tác dụng trừ khi
-# `docker compose down -v` - LỆNH NÀY XOÁ SẠCH DỮ LIỆU trong mongo_data).
-echo -n "honeypot_app" > secrets/mongo_username.txt
+# Mật khẩu MongoDB (2 tài khoản) - chỉ có tác dụng lúc mongo container
+# khởi động LẦN ĐẦU với volume dữ liệu rỗng (đổi sau này không có tác dụng
+# trừ khi `docker compose down -v` - LỆNH NÀY XOÁ SẠCH DỮ LIỆU trong mongo_data).
+
+# 1. Tài khoản ROOT - chỉ dùng cho việc quản trị (backup, mongosh thủ công,
+#    mongodb-exporter). Không app service nào dùng tài khoản này.
+echo -n "honeypot_root" > secrets/mongo_username.txt
 python3 -c "import secrets; print(secrets.token_urlsafe(24))" > secrets/mongo_password.txt
 
+# 2. Tài khoản APP (least-privilege) - mongo-init/create-app-user.sh tự tạo
+#    tài khoản này với quyền readWrite CHỈ trên database "honeypot" (không
+#    phải root) - đây mới là tài khoản mà parser-api/log-watcher/cleanup/
+#    realtime-alert/telegram-commands thực sự dùng để kết nối.
+echo -n "honeypot_app" > secrets/mongo_app_username.txt
+python3 -c "import secrets; print(secrets.token_urlsafe(24))" > secrets/mongo_app_password.txt
+
 # mongodb-exporter không hỗ trợ kiểu file secret như trên (giới hạn của
-# chính công cụ đó) - cần 1 file .env riêng chứa plaintext (vẫn gitignore):
+# chính công cụ đó) - cần 1 file .env riêng chứa plaintext (vẫn gitignore).
+# Dùng tài khoản ROOT ở đây (không phải app) vì --collector.diagnosticdata
+# cần quyền clusterMonitor, rộng hơn readWrite trên 1 database:
 cat > secrets/mongodb_exporter.env <<EOF
-MONGODB_USER=honeypot_app
+MONGODB_USER=$(cat secrets/mongo_username.txt)
 MONGODB_PASSWORD=$(cat secrets/mongo_password.txt)
 EOF
 
@@ -160,13 +172,27 @@ docker compose up -d --build
 
 Ghi chú: MongoDB trong Compose **đã bật authentication** (khác với mongod
 native, vẫn không cần auth vì chỉ bind `127.0.0.1` — 2 cách chạy có 2 mức
-bảo mật khác nhau, đây là điểm khác biệt chính giữa chúng). Tài khoản root
-được tạo 1 lần duy nhất từ `secrets/mongo_username.txt`/`mongo_password.txt`
-lúc `mongo` container khởi động lần đầu — không phải least-privilege (mọi
-service dùng chung 1 tài khoản root thay vì tài khoản riêng chỉ có quyền
-trên DB `honeypot`), nhưng vẫn hơn hẳn "không auth gì cả" và không cần
-thêm hạ tầng (Vault...). Nếu tính triển khai VPS public thật, đây là bước
-đã sẵn sàng, không cần làm thêm gì cho phần Mongo auth.
+bảo mật khác nhau, đây là điểm khác biệt chính giữa chúng), và đã
+**least-privilege** (2 tài khoản, không dùng chung 1 root nữa):
+
+- Tài khoản **root** (`secrets/mongo_username.txt`/`mongo_password.txt`) —
+  chỉ dùng cho quản trị (backup, mongosh thủ công, mongodb-exporter).
+- Tài khoản **app** (`secrets/mongo_app_username.txt`/`mongo_app_password.txt`)
+  — do `mongo-init/create-app-user.sh` tự tạo, chỉ có quyền `readWrite`
+  trên đúng database `honeypot`. Đây là tài khoản mà `parser-api`,
+  `parser-log-watcher`, `parser-cleanup`, `notifier-realtime-alert`, và
+  `notifier-telegram-commands` thực sự dùng để kết nối — nếu container nào
+  trong số này bị chiếm quyền, kẻ tấn công cũng không đụng được database
+  hay lệnh admin khác.
+
+Cả hai đều chỉ được tạo 1 lần duy nhất lúc `mongo` container khởi động lần
+đầu với volume rỗng — đổi file secret sau đó không có tác dụng trừ khi chạy
+`docker compose down -v` (XOÁ SẠCH DỮ LIỆU). Đã kiểm chứng bằng container
+Docker thật (không chỉ đọc YAML): tài khoản app tạo đúng, chỉ `readWrite`
+trên `honeypot` (thử ghi vào database khác bị từ chối), `parser-api` kết
+nối/login được bình thường qua tài khoản app, `mongodb-exporter` vẫn hoạt
+động qua tài khoản root không đổi. Nếu tính triển khai VPS public thật, đây
+là bước đã sẵn sàng, không cần làm thêm gì cho phần Mongo auth.
 
 ---
 
