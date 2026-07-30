@@ -10,6 +10,7 @@ MongoDB database, no matter what a test does.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import jwt
@@ -519,6 +520,99 @@ class TestAuthLogging:
 
         doc = auth.auth_log_col.find_one({"username": username, "success": True})
         assert doc is not None
+
+
+# ---------------------------------------------------------------------------
+# Immutable (tamper-evident) audit log: auth_log entries are hash-chained,
+# each entry's hash covering its own fields + the previous entry's hash.
+# ---------------------------------------------------------------------------
+class TestAuditLogHashChain:
+    def test_al01_sequential_entries_form_a_valid_chain(self, fresh_app):
+        client, main, auth = fresh_app
+        auth.log_auth_event("1.2.3.4", "alice", success=False, user_agent="ua1")
+        auth.log_auth_event("1.2.3.5", "bob", success=True, user_agent="ua2")
+        auth.log_auth_event("1.2.3.6", "carol", success=False, user_agent="ua3")
+
+        result = auth.verify_auth_log_integrity()
+
+        assert result == {"ok": True, "checked": 3, "broken_at_seq": None}
+
+    def test_al02_first_entry_chains_to_the_genesis_hash(self, fresh_app):
+        client, main, auth = fresh_app
+        auth.log_auth_event("1.2.3.4", "alice", success=False)
+
+        doc = auth.auth_log_col.find_one({"seq": 0})
+        assert doc["prev_hash"] == auth.AUTH_LOG_GENESIS_HASH
+
+    def test_al03_editing_a_field_in_an_entry_is_detected(self, fresh_app):
+        """Tampering doesn't have to be deleting a row - just flipping
+        `success` from False to True (e.g. to hide a failed-login trail)
+        must also break the chain, since the field is part of what's
+        hashed."""
+        client, main, auth = fresh_app
+        auth.log_auth_event("1.2.3.4", "alice", success=False)
+        auth.log_auth_event("1.2.3.5", "bob", success=False)
+        auth.log_auth_event("1.2.3.6", "carol", success=False)
+
+        auth.auth_log_col.update_one({"seq": 1}, {"$set": {"success": True}})
+
+        result = auth.verify_auth_log_integrity()
+
+        assert result["ok"] is False
+        assert result["broken_at_seq"] == 1
+        assert result["checked"] == 1  # entry 0 still verified fine before the break
+
+    def test_al04_deleting_a_middle_entry_is_detected(self, fresh_app):
+        client, main, auth = fresh_app
+        auth.log_auth_event("1.2.3.4", "alice", success=False)
+        auth.log_auth_event("1.2.3.5", "bob", success=False)
+        auth.log_auth_event("1.2.3.6", "carol", success=False)
+
+        auth.auth_log_col.delete_one({"seq": 1})
+
+        result = auth.verify_auth_log_integrity()
+
+        assert result["ok"] is False
+        assert result["broken_at_seq"] == 2  # seq 2's prev_hash no longer matches seq 0's hash
+
+    def test_al05_empty_log_is_trivially_valid(self, fresh_app):
+        client, main, auth = fresh_app
+        assert auth.verify_auth_log_integrity() == {"ok": True, "checked": 0, "broken_at_seq": None}
+
+    def test_al07_legacy_entry_predating_the_hash_chain_is_ignored_not_crashed_on(self, fresh_app):
+        """Production already has a real auth_log entry from before this
+        feature existed (2026-07-28) with no seq/prev_hash/entry_hash at
+        all. log_auth_event() must not KeyError trying to chain off of it,
+        and verify_auth_log_integrity() must not treat it as a broken
+        chain link - it's simply outside what this feature can attest to."""
+        client, main, auth = fresh_app
+        auth.auth_log_col.insert_one(
+            {"timestamp": auth._now(), "ip": "127.0.0.1", "username": "legacy_user", "success": True}
+        )
+
+        auth.log_auth_event("1.2.3.4", "alice", success=False)  # must not raise
+
+        result = auth.verify_auth_log_integrity()
+        assert result == {"ok": True, "checked": 1, "broken_at_seq": None}  # legacy entry not counted
+        assert auth.auth_log_col.find_one({"username": "alice"})["seq"] == 0  # chain starts fresh
+
+    def test_al06_concurrent_logins_extend_the_chain_without_forking(self, fresh_app):
+        """Many logins racing to append to the chain at once must still
+        produce a single, gapless, valid sequence - not two entries both
+        claiming the same seq (a fork), which the unique index + retry
+        loop in log_auth_event() exists specifically to prevent."""
+        client, main, auth = fresh_app
+
+        def fire(i):
+            auth.log_auth_event(f"10.0.0.{i}", f"user{i}", success=False)
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            list(pool.map(fire, range(20)))
+
+        result = auth.verify_auth_log_integrity()
+        assert result == {"ok": True, "checked": 20, "broken_at_seq": None}
+        seqs = sorted(d["seq"] for d in auth.auth_log_col.find({}, {"seq": 1}))
+        assert seqs == list(range(20))  # no gaps, no duplicates
 
 
 # ---------------------------------------------------------------------------

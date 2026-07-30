@@ -117,6 +117,8 @@ class TestEmptyDatabase:
         "/api/brute-force",
         "/api/search?ip=1.2.3.4",
         "/api/export/csv",
+        "/api/auth-log",
+        "/api/auth-log/verify",
     ]
 
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
@@ -355,7 +357,7 @@ def _login_with_role(fresh_app, username, password, role=None):
     return client, main, auth
 
 
-ADMIN_ONLY_ENDPOINTS = ["/api/export/csv", "/api/alerts/pending"]
+ADMIN_ONLY_ENDPOINTS = ["/api/export/csv", "/api/alerts/pending", "/api/auth-log", "/api/auth-log/verify"]
 VIEWER_ALLOWED_ENDPOINTS = [
     "/api/stats", "/api/attacks", "/api/top-ips", "/api/top-passwords",
     "/api/top-usernames", "/api/map-data", "/api/stats/hourly",
@@ -396,3 +398,54 @@ class TestRoleBasedAccess:
         r = client.get("/auth/me")
         assert r.status_code == 200
         assert r.json()["role"] == "viewer"
+
+
+# ---------------------------------------------------------------------------
+# /api/auth-log and /api/auth-log/verify: the hash-chained, tamper-evident
+# audit log (see parser/auth.py's log_auth_event/verify_auth_log_integrity).
+# ---------------------------------------------------------------------------
+class TestAuthLogEndpoints:
+    def test_authlog01_list_reflects_login_attempts_newest_first(self, fresh_app):
+        client, main, auth = _login(fresh_app)  # 1 successful login already logged
+        client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+
+        r = client.get("/api/auth-log")
+
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 2
+        assert data[0]["success"] is False  # newest (the failed attempt) first
+        assert data[1]["success"] is True
+
+    def test_authlog02_list_never_exposes_the_hash_chain_fields(self, fresh_app):
+        """entry_hash/prev_hash are internal integrity-check plumbing, not
+        something the dashboard needs to render - keep the response
+        focused on human-readable fields."""
+        client, main, auth = _login(fresh_app)
+
+        r = client.get("/api/auth-log")
+
+        entry = r.json()["data"][0]
+        assert "entry_hash" not in entry
+        assert "prev_hash" not in entry
+        assert "seq" in entry  # still useful for ordering/debugging
+
+    def test_authlog03_verify_reports_ok_on_an_untampered_chain(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+
+        r = client.get("/api/auth-log/verify")
+
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "checked": 2, "broken_at_seq": None}
+
+    def test_authlog04_verify_detects_a_tampered_entry(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        auth.auth_log_col.update_one({"seq": 0}, {"$set": {"success": False}})
+
+        r = client.get("/api/auth-log/verify")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False
+        assert body["broken_at_seq"] == 0

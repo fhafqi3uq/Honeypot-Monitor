@@ -31,6 +31,8 @@ Mechanism summary (see README for the full write-up):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import secrets
 import time
@@ -43,6 +45,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from pymongo import MongoClient, ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 load_dotenv()
 
@@ -98,6 +101,14 @@ refresh_tokens_col.create_index("expires_at", expireAfterSeconds=0)
 login_attempts_col.create_index("key", unique=True)
 api_rate_limits_col.create_index("key", unique=True)
 api_rate_limits_col.create_index("expires_at", expireAfterSeconds=0)
+# Doubles as the concurrency guard for log_auth_event()'s hash chain below -
+# two requests racing to claim the same seq will have one lose to a
+# DuplicateKeyError and retry, the same idiom users_col's unique username
+# index already uses for registration races.
+auth_log_col.create_index("seq", unique=True)
+
+# Genesis value for the audit-log hash chain - the first entry's prev_hash.
+AUTH_LOG_GENESIS_HASH = "0" * 64
 
 # A fixed dummy hash to run bcrypt.checkpw against when the username doesn't
 # exist, so a login attempt for a nonexistent user takes roughly the same
@@ -251,16 +262,102 @@ def reset_attempts(ip: str, username: str) -> None:
     login_attempts_col.delete_one({"key": _rate_limit_key(ip, username)})
 
 
+def _auth_log_canonical_bytes(
+    seq: int, prev_hash: str, timestamp: datetime, ip: str, username: str,
+    success: bool, user_agent: str,
+) -> bytes:
+    # BSON dates only keep millisecond precision, while Python datetimes
+    # carry microseconds - hashing the raw datetime would make every
+    # verification pass "detect tampering" that's really just precision
+    # loss from the MongoDB round-trip. Rounding to milliseconds here
+    # first means a value re-read from MongoDB during verification
+    # reproduces the exact same bytes (and hash) as when it was written.
+    ts = timestamp.strftime("%Y-%m-%dT%H:%M:%S.") + f"{timestamp.microsecond // 1000:03d}"
+    payload = {
+        "seq": seq, "prev_hash": prev_hash, "timestamp": ts,
+        "ip": ip, "username": username, "success": success, "user_agent": user_agent,
+    }
+    return json.dumps(payload, sort_keys=True).encode("utf-8")
+
+
 def log_auth_event(ip: str, username: str, success: bool, user_agent: str = "") -> None:
-    auth_log_col.insert_one(
-        {
-            "timestamp": _now(),
-            "ip": ip,
-            "username": username,
-            "success": success,
-            "user_agent": user_agent,
-        }
-    )
+    """Appends a tamper-EVIDENT audit log entry: each entry's hash is
+    computed over its own fields plus the previous entry's hash, chaining
+    every entry to the one before it (the same linking idea a blockchain
+    uses, applied to one MongoDB collection). This does NOT stop someone
+    with direct database access from editing or deleting a row - nothing
+    running only inside this app can prevent that - but it makes it
+    DETECTABLE: changing or removing any entry breaks the hash chain from
+    that point forward, which verify_auth_log_integrity() below will
+    report, down to the exact entry where it broke.
+
+    The retry loop + unique index on "seq" is the concurrency guard: two
+    logins racing to read "the current last entry" and append the next one
+    would otherwise silently fork the chain (two different entries both
+    claiming to be seq N with different prev_hash) instead of extending it
+    - the unique index makes the second insert fail with a DuplicateKeyError,
+    at which point it retries against the new tip.
+    """
+    # "seq": {"$exists": True} excludes entries logged before this hash-chain
+    # feature existed (a real one is already sitting in production, from
+    # 2026-07-28) - those have no seq/entry_hash at all, so treating them as
+    # chain members would either KeyError or fork the chain. The chain
+    # simply starts fresh at seq 0 the first time this runs; pre-existing
+    # entries are left alone, not retroactively covered by tamper-evidence
+    # (nothing can prove the integrity of data written before this existed).
+    timestamp = _now()
+    while True:
+        last_entry = auth_log_col.find_one({"seq": {"$exists": True}}, sort=[("seq", -1)])
+        seq = (last_entry["seq"] + 1) if last_entry else 0
+        prev_hash = last_entry["entry_hash"] if last_entry else AUTH_LOG_GENESIS_HASH
+
+        entry_hash = hashlib.sha256(
+            _auth_log_canonical_bytes(seq, prev_hash, timestamp, ip, username, success, user_agent)
+        ).hexdigest()
+
+        try:
+            auth_log_col.insert_one(
+                {
+                    "seq": seq,
+                    "prev_hash": prev_hash,
+                    "entry_hash": entry_hash,
+                    "timestamp": timestamp,
+                    "ip": ip,
+                    "username": username,
+                    "success": success,
+                    "user_agent": user_agent,
+                }
+            )
+            return
+        except DuplicateKeyError:
+            continue  # another request claimed this seq first - retry against the new tip
+
+
+def verify_auth_log_integrity() -> dict:
+    """Walks the entire auth_log hash chain in seq order, recomputing each
+    entry's hash from its own stored fields + the previous entry's stored
+    hash, and compares it against what's actually stored. Returns
+    {"ok": bool, "checked": int, "broken_at_seq": int | None} -
+    broken_at_seq is the first entry (if any) whose hash doesn't match what
+    the chain predicts, i.e. the first point where a row was edited,
+    deleted, or reordered. Entries logged before this feature existed (no
+    "seq" field at all) are skipped, not counted, and can't break the
+    chain - see log_auth_event()'s comment on the same filter."""
+    prev_hash = AUTH_LOG_GENESIS_HASH
+    checked = 0
+    for entry in auth_log_col.find({"seq": {"$exists": True}}).sort("seq", 1):
+        expected_hash = hashlib.sha256(
+            _auth_log_canonical_bytes(
+                entry.get("seq"), prev_hash, entry.get("timestamp"),
+                entry.get("ip"), entry.get("username"), entry.get("success"),
+                entry.get("user_agent", ""),
+            )
+        ).hexdigest()
+        if entry.get("prev_hash") != prev_hash or entry.get("entry_hash") != expected_hash:
+            return {"ok": False, "checked": checked, "broken_at_seq": entry.get("seq")}
+        prev_hash = entry["entry_hash"]
+        checked += 1
+    return {"ok": True, "checked": checked, "broken_at_seq": None}
 
 
 def client_ip(request: Request) -> str:

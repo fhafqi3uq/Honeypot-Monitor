@@ -309,6 +309,31 @@ def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):
     attacks = list(collection.find({"src_ip": ip}, {"_id": 0}).sort("timestamp", -1).limit(100))
     return {"ip": ip, "total": len(attacks), "data": attacks}
 
+# Admin-only, same as /api/export/csv and /api/alerts/pending: this is the
+# system's own access log (who logged into the dashboard/API, from where,
+# when, success or failure) - a viewer account has no business reading it.
+@api_router.get("/auth-log")
+def get_auth_log(limit: int = 50, user: str = Depends(auth.require_admin)):
+    entries = list(
+        auth.auth_log_col.find({}, {"_id": 0, "prev_hash": 0, "entry_hash": 0})
+        .sort("seq", -1)
+        .limit(limit)
+    )
+    return {"data": entries}
+
+@api_router.get("/auth-log/verify")
+def verify_auth_log(user: str = Depends(auth.require_admin)):
+    """Recomputes the auth_log hash chain end-to-end and reports whether it
+    is still intact - see auth.verify_auth_log_integrity()'s docstring for
+    what this can and can't detect."""
+    result = auth.verify_auth_log_integrity()
+    if not result["ok"]:
+        logger.warning(
+            "Auth log integrity check FAILED at seq %s", result["broken_at_seq"],
+            extra={"username": user, "endpoint": "/api/auth-log/verify"},
+        )
+    return result
+
 # Excel/Google Sheets/LibreOffice treat a cell starting with any of these
 # as a formula to evaluate on open. Every field below comes straight from
 # an attacker-controlled Cowrie event (username/password/command) or is
