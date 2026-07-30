@@ -55,8 +55,11 @@ wget https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb -O g
 # Import log mẫu vào MongoDB
 python parser.py
 
-# Chạy API
-uvicorn main:app --host 0.0.0.0 --port 8000
+# Chạy API - LUÔN bind 127.0.0.1, không phải 0.0.0.0: API không có gì chặn
+# port-scan nếu bind ra ngoài, sẽ lộ ngay cho attacker biết đây là hệ thống
+# có giám sát. Nếu cần truy cập dashboard/API từ xa, dùng SSH tunnel/VPN,
+# không mở port này ra internet trực tiếp (xem checklist go-live).
+uvicorn main:app --host 127.0.0.1 --port 8000
 
 # Chạy log watcher realtime
 nohup python3 log_watcher.py > /tmp/log_watcher.log 2>&1 &
@@ -68,7 +71,9 @@ nohup python3 log_watcher.py > /tmp/log_watcher.log 2>&1 &
 ```bash
 sudo npm install -g live-server
 cd ~/Honeypot-Monitor/dashboard
-live-server . --port=8080
+# --host=127.0.0.1 bắt buộc - live-server mặc định bind mọi interface,
+# sẽ lộ dashboard ra internet nếu chạy trên VPS public.
+live-server . --port=8080 --host=127.0.0.1
 # Mở trình duyệt: http://localhost:8080
 ```
 
