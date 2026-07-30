@@ -288,6 +288,7 @@ def cowrie_process():
     `cowrie force-stop` (waits for graceful shutdown, then SIGKILLs) on
     teardown.
     """
+    import json
     import os
     import socket
     import subprocess
@@ -295,6 +296,21 @@ def cowrie_process():
     cowrie_dir = REPO_ROOT / "honeypot" / "cowrie-src"
     cowrie_env_bin = cowrie_dir / "cowrie-env" / "bin"
     cowrie_bin = cowrie_env_bin / "cowrie"
+
+    # Reset Cowrie's own AuthRandom state (honeypot/cowrie-src/src/cowrie/
+    # core/auth.py) BEFORE starting it - that class loads this file once
+    # into memory at process startup, so resetting it after Cowrie is
+    # already running wouldn't take effect. Without this, a stale recorded
+    # username/password combo for 127.0.0.1 left behind by an EARLIER test
+    # session (e.g. test_performance.py's restart-resilience test uses
+    # "restartA0"/etc as usernames) permanently blocks every later
+    # session's E2E logins using a different username ("root") - this is
+    # what actually caused test_e2e.py's real failures, not a missing
+    # ipinfo.io mock (that exception is already caught gracefully inside
+    # bot.py's get_ip_info() and was a red herring in the logs).
+    auth_random_state_file = cowrie_dir / "var" / "lib" / "cowrie" / "auth_random.json"
+    auth_random_state_file.parent.mkdir(parents=True, exist_ok=True)
+    auth_random_state_file.write_text(json.dumps({}))
 
     # `cowrie start` execs `twistd` via os.execvp, which searches PATH -
     # cowrie-env/bin must be on it (normally done by `source

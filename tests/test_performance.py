@@ -28,13 +28,29 @@ Safety: reuses the SAME fixtures as the E2E layer (`cowrie_process`,
 `e2e_watcher`) - a REAL Cowrie honeypot and a REAL notifier/realtime_alert.py
 watcher, but pointed at the isolated "honeypot_e2e_test" MongoDB database
 with Telegram mocked (see conftest.py's `e2e_watcher_session`) - never the
-production "honeypot" database or a real Telegram chat. Also resets Cowrie's
-own local auth_random.json state file before each run (see
-`_reset_cowrie_auth_state` below) - this is the honeypot's own scratch
-state on this machine, not application data, and resetting it makes each
-concurrency level start from the same "first visit" baseline instead of
-being at the mercy of whatever an earlier run (or an earlier E2E test)
-happened to leave behind.
+production "honeypot" database or a real Telegram chat.
+
+`cowrie_process` (conftest.py) resets Cowrie's own local auth_random.json
+state file once, right before starting the Cowrie subprocess for the whole
+session - this is the ONLY point where resetting it has any effect:
+AuthRandom's `loadvars()` (honeypot/cowrie-src/src/cowrie/core/auth.py)
+runs exactly once, in `__init__`, so overwriting the file while Cowrie is
+already running doesn't touch its in-memory state at all (an earlier
+version of this file tried to reset between concurrency levels mid-session
+and it silently did nothing - the tests below don't actually depend on a
+truly fresh AuthRandom state per run, they're designed to produce a
+meaningful signal regardless of whatever state it's in, see each test's
+own docstring/comments for why). Without the conftest.py-level reset, a
+stale recorded combo left behind by an earlier test session (this file
+included) would make later E2E logins from a different username
+permanently fail - the bug that motivated adding it. This only fixes the
+CROSS-session case (separate `pytest` invocations, each starting its own
+Cowrie subprocess) - see test_suite_howto's documented run commands,
+which already never combine this file and test_e2e.py in one invocation.
+Running `pytest tests/test_performance.py tests/test_e2e.py` together
+would still pollute test_e2e.py's logins with this file's real traffic,
+since both would share the one session-scoped `cowrie_process`; don't do
+that.
 
 This is intentionally NOT wired into the default test run. It's slower and
 noisier than the correctness suites (it opens dozens of real SSH
@@ -52,12 +68,10 @@ pytest swallows stdout on passing tests.)
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 import paramiko
 import pytest
@@ -65,20 +79,6 @@ import pytest
 from conftest import REPO_ROOT, _REAL_MONGO_CLIENT
 
 pytestmark = pytest.mark.performance
-
-AUTH_RANDOM_STATE_FILE = (
-    REPO_ROOT / "honeypot" / "cowrie-src" / "var" / "lib" / "cowrie" / "auth_random.json"
-)
-
-
-def _reset_cowrie_auth_state():
-    """Clears Cowrie's own AuthRandom state file so 127.0.0.1 starts each
-    concurrency level as a fresh "first visit" IP - see module docstring
-    for why a stale recorded combo from an earlier run would otherwise
-    make every different-username attempt fail for the rest of this file's
-    lifetime. This is the honeypot's local scratch state, not app data."""
-    AUTH_RANDOM_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    AUTH_RANDOM_STATE_FILE.write_text(json.dumps({}))
 
 
 def _attacker_session(index, attempts_per_attacker=3):
@@ -126,7 +126,6 @@ def _run_concurrent_load(concurrency, collection, attempts_per_attacker=3):
     to stop growing (a short quiet window, not a fixed sleep) before
     reporting final counts. `collection` must already be empty (see
     `e2e_watcher`)."""
-    _reset_cowrie_auth_state()
     t0 = time.time()
 
     results = []
@@ -288,7 +287,6 @@ class TestRestartResilience:
             # Cowrie's AuthRandom happened to give that attempt.
             return collection.count_documents({"username": {"$regex": f"^{prefix}"}})
 
-        _reset_cowrie_auth_state()
         proc = _start_watcher()
         time.sleep(2)  # let it import, open, and seek(0, 2) the real log file
 

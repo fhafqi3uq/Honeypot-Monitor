@@ -135,7 +135,12 @@ class TestFullKillChain:
                 break
             time.sleep(0.3)
 
-        assert collection.count_documents({"event": "cowrie.login.failed"}) >= 1
+        # NOT asserting login.failed >= 1 here: honeypot/cowrie-src/etc/
+        # cowrie.cfg sets auth_class_parameters = 1,2,3 (mintry=1), so
+        # roughly half the time AuthRandom's randomly-chosen threshold is
+        # exactly 1 and _attack()'s very first guess succeeds immediately,
+        # legitimately producing zero failed attempts first - asserting
+        # >= 1 here made this test genuinely flaky (~50%), not a real bug.
         assert collection.count_documents({"event": "cowrie.login.success"}) == 1
         assert collection.count_documents({"event": "cowrie.command.input"}) == len(
             ["whoami", "uname -a", "cat /etc/passwd"]
