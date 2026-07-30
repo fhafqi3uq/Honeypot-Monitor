@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pymongo import MongoClient
 from geoip_lookup import get_geo
 
@@ -68,7 +68,7 @@ def parse_event(raw: dict) -> dict | None:
         "latitude":        geo["latitude"],
         "longitude":       geo["longitude"],
         "alerted":         False,
-        "created_at":      datetime.utcnow()
+        "created_at":      datetime.now(timezone.utc)
     }
     if eventid == "cowrie.session.closed":
         SESSION_CACHE.pop(session, None)

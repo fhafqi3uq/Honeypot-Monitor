@@ -1,6 +1,7 @@
 import html
 import requests
 import os
+import time
 from dotenv import load_dotenv
 from notify_log_setup import get_logger
 
@@ -12,15 +13,45 @@ TOKEN     = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 ABUSE_KEY = os.getenv("ABUSEIPDB_KEY")
 
+REQUEST_TIMEOUT = 10
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 2
+
+def _request_with_retry(method, url, **kwargs):
+    """Wrap a requests.get/post call with a fixed timeout and retry-with-
+    backoff on Timeout/ConnectionError. Without this, a slow or unreachable
+    Telegram/AbuseIPDB/ipinfo.io endpoint hangs (or silently fails) the
+    single-threaded realtime alert pipeline - a transient network blip would
+    otherwise cost an entire alert with no second attempt."""
+    kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return method(url, **kwargs)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            logger.warning(
+                "Request to %s failed (attempt %d/%d): %s", url, attempt, MAX_RETRIES, exc
+            )
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+    raise last_exc
+
 def send_message(text: str) -> bool:
     # Never log TOKEN/url - it embeds TELEGRAM_TOKEN.
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    res = requests.post(url, json={
-        "chat_id":    CHAT_ID,
-        "text":       text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    })
+    try:
+        res = _request_with_retry(requests.post, url, json={
+            "chat_id":    CHAT_ID,
+            "text":       text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        })
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        logger.error(
+            "Telegram send_message failed after %d retries", MAX_RETRIES, exc_info=True
+        )
+        return False
     if res.status_code != 200:
         logger.warning("Telegram send_message failed with status %s", res.status_code)
     return res.status_code == 200
@@ -33,7 +64,7 @@ def check_abuseipdb(ip: str) -> int:
         url = 'https://api.abuseipdb.com/api/v2/check'
         headers = {'Accept': 'application/json', 'Key': ABUSE_KEY}
         params = {'ipAddress': ip, 'maxAgeInDays': '90'}
-        res = requests.get(url, headers=headers, params=params, timeout=5).json()
+        res = _request_with_retry(requests.get, url, headers=headers, params=params).json()
         return res['data']['abuseConfidenceScore']
     except Exception:
         logger.warning("AbuseIPDB lookup failed for %s", ip, extra={"ip": ip}, exc_info=True)
@@ -58,7 +89,7 @@ def get_severity(eventid, abuse_score=0):
 def get_ip_info(ip: str) -> dict:
     abuse_score = check_abuseipdb(ip)
     try:
-        res = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
+        res = _request_with_retry(requests.get, f"https://ipinfo.io/{ip}/json")
         data = res.json()
         loc  = data.get("loc", "")
         lat, lon = loc.split(",") if "," in loc else (None, None)

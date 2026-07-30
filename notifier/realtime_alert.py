@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pymongo import MongoClient
 from bot import alert_login_failed, alert_login_success, alert_command
 from notify_log_setup import get_logger
@@ -100,7 +100,7 @@ def process_event(raw: dict):
         "latitude":        geo["latitude"],
         "longitude":       geo["longitude"],
         "alerted":         True,
-        "created_at":      datetime.utcnow()
+        "created_at":      datetime.now(timezone.utc)
     }
     collection.insert_one(doc)
     logger.info(

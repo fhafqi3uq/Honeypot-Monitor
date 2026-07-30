@@ -292,16 +292,14 @@ class TestLogout:
 
 
 # ---------------------------------------------------------------------------
-# DB-08: map.html is missing the "Tìm kiếm IP" nav link (pre-existing bug)
+# DB-08: map.html nav now matches the other 4 dashboard pages
 # ---------------------------------------------------------------------------
 class TestKnownNavBug:
-    def test_db08_map_page_nav_is_missing_search_link(self, page, live_stack_clean):
+    def test_db08_map_page_nav_has_search_link(self, page, live_stack_clean):
         """
-        Pre-existing, non-security bug: every other page's sidebar has 5
-        nav links (Dashboard/Tấn công/Thống kê/Bản đồ/Tìm kiếm IP), but
-        map.html only has 4 - it's missing "Tìm kiếm IP". Documented here
-        so this doesn't get silently "fixed" without anyone noticing the
-        inconsistency was real, and so a real fix updates this test.
+        Every dashboard page's sidebar should have the same 5 nav links
+        (Dashboard/Tấn công/Thống kê/Bản đồ/Tìm kiếm IP). map.html used to
+        be missing "Tìm kiếm IP" - now fixed, so it should match.
         """
         _, dashboard_url, test_db = live_stack_clean
         username, password = _seed_user(test_db)
@@ -310,9 +308,8 @@ class TestKnownNavBug:
         page.goto(f"{dashboard_url}/map.html")
         nav_links = page.locator(".sidebar nav a").all_text_contents()
 
-        assert not any("Tìm kiếm" in text for text in nav_links), (
-            "map.html now has the 'Tìm kiếm IP' link - if this bug was fixed, "
-            "update/remove this test."
+        assert any("Tìm kiếm" in text for text in nav_links), (
+            "map.html is missing the 'Tìm kiếm IP' nav link again"
         )
 
 

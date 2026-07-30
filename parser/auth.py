@@ -35,7 +35,7 @@ import os
 import secrets
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
@@ -123,10 +123,13 @@ def verify_password(password: str, password_hash: str) -> bool:
 def _now() -> datetime:
     # Naive UTC on purpose: pymongo stores/returns BSON dates as naive UTC
     # datetimes, and mixing naive/aware datetimes raises a TypeError on
-    # comparison. Keeping everything naive-UTC (matching datetime.utcnow()
-    # used elsewhere in this project) avoids that entirely; PyJWT accepts
-    # naive datetimes for iat/exp and treats them as UTC.
-    return datetime.utcnow()
+    # comparison. datetime.utcnow() is deprecated (Python 3.12+) but its
+    # non-deprecated replacement, datetime.now(timezone.utc), returns an
+    # AWARE datetime - stripping tzinfo here keeps every comparison against
+    # Mongo-stored dates elsewhere in this file (locked_until, expires_at,
+    # first_attempt_at, ...) working exactly as before. PyJWT accepts naive
+    # datetimes for iat/exp and treats them as UTC.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def get_user_role(username: str) -> str:

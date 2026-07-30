@@ -32,27 +32,29 @@ from conftest import (
 # AL-06, AL-07, AL-08: notifier/bot.py resilience (or lack thereof)
 # ---------------------------------------------------------------------------
 class TestBotResilience:
-    def test_al06_send_message_has_no_retry_and_propagates_connection_errors(
+    def test_al06_send_message_retries_on_connection_error_then_fails_gracefully(
         self, fresh_module, monkeypatch
     ):
-        """Documents current behaviour: bot.send_message() has no
-        try/except around requests.post, so a Telegram outage raises
-        straight out of the function - there is no retry."""
+        """bot.send_message() now retries MAX_RETRIES times (with backoff)
+        on a connection-level failure, then returns False instead of
+        raising - a Telegram outage no longer crashes the caller
+        (realtime_alert.py's single-threaded watch_log() loop)."""
         bot = fresh_module("bot")
+        monkeypatch.setattr(bot.time, "sleep", lambda s: None)
         mock_post = Mock(side_effect=requests.exceptions.ConnectionError("DNS resolution failed"))
         monkeypatch.setattr(requests, "post", mock_post)
 
-        with pytest.raises(requests.exceptions.ConnectionError):
-            bot.send_message("test alert")
+        result = bot.send_message("test alert")
 
-        assert mock_post.call_count == 1  # no retry attempted
+        assert result is False
+        assert mock_post.call_count == bot.MAX_RETRIES
 
-    def test_al06_send_message_never_sets_a_timeout(self, fresh_module, monkeypatch):
-        """Without an explicit timeout, a hung/dead connection to Telegram
-        would block the caller forever - and since realtime_alert.py's
-        watch_log() loop is synchronous and single-threaded, that means
-        the entire honeypot alert pipeline stalls, not just this one
-        alert."""
+    def test_al06_send_message_sets_a_timeout(self, fresh_module, monkeypatch):
+        """A timeout is now set on every Telegram request - a hung/dead
+        connection to Telegram no longer blocks the caller forever, and
+        since realtime_alert.py's watch_log() loop is synchronous and
+        single-threaded, that would otherwise stall the entire honeypot
+        alert pipeline, not just this one alert."""
         bot = fresh_module("bot")
         mock_post = Mock(return_value=Mock(status_code=200))
         monkeypatch.setattr(requests, "post", mock_post)
@@ -60,11 +62,7 @@ class TestBotResilience:
         bot.send_message("test alert")
 
         _, kwargs = mock_post.call_args
-        assert "timeout" not in kwargs, (
-            "bot.send_message() now sets a timeout on requests.post - if this "
-            "assertion fails, the known reliability gap has been fixed; "
-            "update/remove this test and its docstring."
-        )
+        assert kwargs.get("timeout") == bot.REQUEST_TIMEOUT
 
     def test_al07_429_rate_limit_is_not_retried_or_backed_off(self, fresh_module, monkeypatch):
         bot = fresh_module("bot")
@@ -78,6 +76,7 @@ class TestBotResilience:
 
     def test_al08_abuseipdb_timeout_fails_safe_to_zero(self, fresh_module, monkeypatch):
         bot = fresh_module("bot")
+        monkeypatch.setattr(bot.time, "sleep", lambda s: None)
         monkeypatch.setattr(requests, "get", Mock(side_effect=requests.exceptions.Timeout()))
 
         assert bot.check_abuseipdb("203.0.113.7") == 0

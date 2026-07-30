@@ -77,7 +77,7 @@ def parse_event(raw: dict):
         "latitude":        geo["latitude"],
         "longitude":       geo["longitude"],
         "alerted":         False,
-        "created_at":      datetime.utcnow()
+        "created_at":      datetime.now(timezone.utc)
     }
     # session closed -> nothing else will reference this session's cache
     if eventid == "cowrie.session.closed":

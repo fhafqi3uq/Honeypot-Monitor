@@ -1,5 +1,5 @@
 from pymongo import MongoClient
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import schedule
 import time
@@ -9,7 +9,7 @@ db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
 
 def cleanup_old_logs():
-    cutoff = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
     result = collection.delete_many({"timestamp": {"$lt": cutoff}})
     print(f"[{datetime.now()}] Đã xoá {result.deleted_count} log cũ hơn 30 ngày")
 
