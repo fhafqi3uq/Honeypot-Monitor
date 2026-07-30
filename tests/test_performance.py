@@ -242,7 +242,11 @@ class TestRestartResilience:
     in practice - not just "does it come back up" (already covered
     indirectly by start.sh/healthcheck.sh's pkill+respawn loop in
     production) but "what happens to events that arrive during the
-    downtime window".
+    downtime window". This used to document data loss here (no persistent
+    read offset); log_watcher.py now saves one (see its OFFSET_FILE), so
+    this test asserts the FIX - events sent during downtime are recovered
+    once the watcher restarts and reads forward from the saved position,
+    not lost.
 
     Uses parser/log_watcher.py specifically, not notifier/realtime_alert.py:
     log_watcher.py makes NO outbound network calls at all (no Telegram, no
@@ -254,7 +258,7 @@ class TestRestartResilience:
     test), tailing the real Cowrie log via the `cowrie_process` fixture.
     """
 
-    def test_perf02_events_during_downtime_are_lost_but_recovery_works(self, cowrie_process):
+    def test_perf02_events_during_downtime_are_recovered_on_restart(self, cowrie_process, tmp_path):
         real_client = _REAL_MONGO_CLIENT("mongodb://localhost:27017")
         real_client.drop_database(RESTART_TEST_DB_NAME)
         collection = real_client[RESTART_TEST_DB_NAME]["attacks"]
@@ -263,6 +267,9 @@ class TestRestartResilience:
         env = os.environ.copy()
         env["MONGO_URL"] = "mongodb://localhost:27017"
         env["DB_NAME"] = RESTART_TEST_DB_NAME
+        # Isolate the saved-offset file to this test's tmp_path - otherwise
+        # it would read/write the real logs/log_watcher.offset.json.
+        env["LOG_WATCHER_OFFSET_FILE"] = str(tmp_path / "log_watcher.offset.json")
 
         def _start_watcher():
             return subprocess.Popen(
@@ -307,11 +314,14 @@ class TestRestartResilience:
                 _send_login_probe(f"restartB{i}")
             time.sleep(1)  # give Cowrie a moment to actually flush the lines
 
-            # Restart: a FRESH process seek(0, 2)s to the file's CURRENT
-            # end, so batch B's already-on-disk lines are skipped, not
-            # replayed - there is no persistent read-offset/cursor.
+            # Restart: the fresh process loads the saved offset (same
+            # inode, since no rotation happened) and reads FORWARD from
+            # there, so batch B's already-on-disk lines get processed
+            # instead of skipped.
             proc = _start_watcher()
-            time.sleep(2)
+            deadline = time.time() + 10
+            while time.time() < deadline and _count("restartB") < 3:
+                time.sleep(0.2)
             batch_b_landed = _count("restartB")
 
             # Batch C: generated after the new process is up - proves
@@ -330,21 +340,16 @@ class TestRestartResilience:
         print(
             f"\n[perf] restart-resilience: "
             f"batch A (watcher healthy) landed {batch_a_landed}/3 | "
-            f"batch B (sent during downtime) landed {batch_b_landed}/3 | "
+            f"batch B (sent during downtime, recovered via saved offset) landed {batch_b_landed}/3 | "
             f"batch C (sent after restart) landed {batch_c_landed}/3"
         )
-        if batch_b_landed > 0:
-            print(
-                f"[perf] NOTE: {batch_b_landed}/3 downtime-window events unexpectedly "
-                "survived - worth investigating further"
-            )
 
         assert batch_a_landed == 3, "watcher failed to ingest events while healthy - unrelated bug"
+        assert batch_b_landed == 3, (
+            "events sent during downtime were not recovered - the persistent "
+            "read offset (log_watcher.py's OFFSET_FILE) isn't working"
+        )
         assert batch_c_landed == 3, "watcher did not resume ingesting events after restart"
-        # batch_b_landed == 0 is NOT asserted as a correctness requirement:
-        # it's the documented finding of this test (no persistent read
-        # offset -> events during downtime are silently lost), not a bug to
-        # fail the build over. See the module/class docstrings.
 
 
 # ---------------------------------------------------------------------------

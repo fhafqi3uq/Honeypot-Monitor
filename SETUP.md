@@ -130,6 +130,19 @@ echo -n "<TELEGRAM_TOKEN của bạn>"   > secrets/telegram_token.txt
 echo -n "<TELEGRAM_CHAT_ID của bạn>" > secrets/telegram_chat_id.txt
 echo -n "<ABUSEIPDB_KEY của bạn>"    > secrets/abuseipdb_key.txt   # để trống file cũng được
 
+# Mật khẩu MongoDB - chỉ có tác dụng lúc mongo container khởi động LẦN ĐẦU
+# với volume dữ liệu rỗng (đổi sau này không có tác dụng trừ khi
+# `docker compose down -v` - LỆNH NÀY XOÁ SẠCH DỮ LIỆU trong mongo_data).
+echo -n "honeypot_app" > secrets/mongo_username.txt
+python3 -c "import secrets; print(secrets.token_urlsafe(24))" > secrets/mongo_password.txt
+
+# mongodb-exporter không hỗ trợ kiểu file secret như trên (giới hạn của
+# chính công cụ đó) - cần 1 file .env riêng chứa plaintext (vẫn gitignore):
+cat > secrets/mongodb_exporter.env <<EOF
+MONGODB_USER=honeypot_app
+MONGODB_PASSWORD=$(cat secrets/mongo_password.txt)
+EOF
+
 # 3. Tải GeoIP database vào parser/geoip/ (giống Bước 4) nếu chưa có
 
 # 4. Build và chạy
@@ -145,10 +158,15 @@ docker compose up -d --build
 #             dashboard "Honeypot Monitor - Overview" đã tự nạp sẵn.
 ```
 
-Ghi chú: MongoDB trong Compose hiện **chưa bật authentication** (giống hệt
-mongod native hiện tại) - vẫn chỉ bind `127.0.0.1`, không lộ ra ngoài. Nếu
-tính triển khai VPS public thật, nên bật `--auth` cho Mongo trước, xem
-checklist go-live đã bàn trước đó.
+Ghi chú: MongoDB trong Compose **đã bật authentication** (khác với mongod
+native, vẫn không cần auth vì chỉ bind `127.0.0.1` — 2 cách chạy có 2 mức
+bảo mật khác nhau, đây là điểm khác biệt chính giữa chúng). Tài khoản root
+được tạo 1 lần duy nhất từ `secrets/mongo_username.txt`/`mongo_password.txt`
+lúc `mongo` container khởi động lần đầu — không phải least-privilege (mọi
+service dùng chung 1 tài khoản root thay vì tài khoản riêng chỉ có quyền
+trên DB `honeypot`), nhưng vẫn hơn hẳn "không auth gì cả" và không cần
+thêm hạ tầng (Vault...). Nếu tính triển khai VPS public thật, đây là bước
+đã sẵn sàng, không cần làm thêm gì cho phần Mongo auth.
 
 ---
 

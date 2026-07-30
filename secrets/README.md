@@ -5,7 +5,7 @@ Only used by the Docker Compose workflow (`docker-compose.yml`'s top-level
 directory at all, it reads the same values straight out of `parser/.env` /
 `notifier/.env` as before.
 
-Create these 4 files before `docker compose up` (all gitignored - never
+Create these 6 files before `docker compose up` (all gitignored - never
 commit real values here):
 
 ```bash
@@ -23,10 +23,31 @@ echo -n "<your-telegram-chat-id>" > secrets/telegram_chat_id.txt
 # Optional - AbuseIPDB free-tier key (bot.py's check_abuseipdb() just scores
 # 0 for every IP if this is left as an empty file):
 echo -n "<your-abuseipdb-key>" > secrets/abuseipdb_key.txt
+
+# MongoDB root credentials - bootstrapped by the mongo service ONLY on its
+# very first start with an empty data volume (MONGO_INITDB_ROOT_USERNAME/
+# _PASSWORD semantics - changing these later does nothing until you
+# `docker compose down -v`, which DELETES the mongo_data volume):
+echo -n "honeypot_app"                                       > secrets/mongo_username.txt
+python3 -c "import secrets; print(secrets.token_urlsafe(24))" > secrets/mongo_password.txt
 ```
 
 Each file's content is read by the relevant container at
 `/run/secrets/<name>` (Compose's standalone/non-swarm secret support - a
 bind-mounted read-only file, not swarm's encrypted secret store) via the
-`_read_secret()` helper in `parser/auth.py` / `notifier/bot.py` /
-`notifier/telegram_commands.py`.
+`_read_secret()` helper duplicated in `parser/auth.py`, `parser/log_watcher.py`,
+`parser/cleanup.py`, `notifier/bot.py`, `notifier/realtime_alert.py`, and
+`notifier/telegram_commands.py`. `parser/main.py` reuses `auth.py`'s copy
+rather than duplicating a 3rd time in the same directory.
+
+One more file, NOT part of the 6 above - `mongodb-exporter` (Percona's
+Go binary) has no `<NAME>_FILE` convention of its own, so it can't use the
+same file-mount mechanism. Create a small plain env file for it instead
+(also gitignored, just not file-mounted):
+
+```bash
+cat > secrets/mongodb_exporter.env <<'EOF'
+MONGODB_USER=honeypot_app
+MONGODB_PASSWORD=<same value as secrets/mongo_password.txt>
+EOF
+```

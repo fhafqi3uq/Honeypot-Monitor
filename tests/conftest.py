@@ -453,7 +453,12 @@ def e2e_watcher_session(cowrie_process):
     Points MONGO_URL/DB_NAME at an isolated "honeypot_e2e_test" database
     (dropped at session end via `cowrie_process`'s teardown) on the real
     mongod. LOG_FILE is left as realtime_alert.py's own default - the real
-    path `cowrie_process`'s Cowrie instance writes to.
+    path `cowrie_process`'s Cowrie instance writes to. REALTIME_ALERT_OFFSET_FILE
+    is pointed at a throwaway temp path, NOT realtime_alert.py's own default
+    (which would land in the real repo's logs/ directory) - otherwise this
+    session would save a real inode/byte-position against the real Cowrie
+    log file, which a later NATIVE (non-test) run of realtime_alert.py
+    against that same log could inherit and skip ahead past real events.
 
     Note: this module MUST get a real, persistent MongoClient, not the
     mongomock `_never_touch_real_mongo` patches in for the rest of the
@@ -462,10 +467,14 @@ def e2e_watcher_session(cowrie_process):
     MongoClient in a different OS process entirely.
     """
     import os
+    import tempfile
     from unittest.mock import Mock
 
     os.environ["MONGO_URL"] = "mongodb://localhost:27017"
     os.environ["DB_NAME"] = E2E_DB_NAME
+    os.environ["REALTIME_ALERT_OFFSET_FILE"] = os.path.join(
+        tempfile.mkdtemp(prefix="e2e-realtime-alert-offset-"), "realtime_alert.offset.json"
+    )
 
     sys.modules.pop("bot", None)
     sys.modules.pop("realtime_alert", None)

@@ -8,10 +8,15 @@ venv/
 *.log
 *.json.gz
 
+# log_watcher.py/realtime_alert.py's saved read-offset state (see
+# OFFSET_FILE in each) - real per-machine runtime state, not project content
+*.offset.json
+
 # Sensitive
 .env
 *.mmdb
 secrets/*.txt
+secrets/mongodb_exporter.env
 
 # Cowrie runtime files (không cần push)
 honeypot/cowrie-src/var/

@@ -12,7 +12,35 @@ logger = get_logger(__name__)
 
 METRICS_PORT = 9100
 
-client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+
+def _read_secret(env_name: str):
+    """Reads a secret from <env_name>_FILE (a file path) if set - the
+    Docker Compose `secrets:` convention (see docker-compose.yml) - else
+    falls back to the plain env var, which is what the native venv
+    workflow uses. Duplicated per-file rather than shared, same as the
+    other `_read_secret()`s in this project (see CLAUDE.md)."""
+    file_path = os.getenv(f"{env_name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.getenv(env_name)
+
+
+def _mongo_auth_kwargs() -> dict:
+    """Adds MongoDB username/password auth if MONGO_USERNAME is set - the
+    native venv workflow (mongod with no --auth) never sets it, so this
+    returns {} and pymongo connects exactly as before."""
+    username = _read_secret("MONGO_USERNAME")
+    if not username:
+        return {}
+    return {
+        "username": username,
+        "password": _read_secret("MONGO_PASSWORD"),
+        "authSource": os.getenv("MONGO_AUTH_SOURCE", "admin"),
+    }
+
+
+client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"), **_mongo_auth_kwargs())
 db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
 
@@ -33,6 +61,17 @@ SESSION_CACHE: dict[str, dict] = {}
 LOG_FILE = os.getenv(
     "COWRIE_LOG_FILE",
     os.path.expanduser("~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"),
+)
+
+# Saved read position - see _load_offset()/_save_offset() below. Lands in
+# the same directory log_setup.py already writes logs/parser.log to (two
+# levels above this file - /logs in the Docker image, <repo_root>/logs
+# natively), which docker-compose.yml already mounts as a persistent
+# volume, so this survives a container recreation, not just an in-process
+# restart.
+OFFSET_FILE = os.getenv(
+    "LOG_WATCHER_OFFSET_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "log_watcher.offset.json"),
 )
 
 def update_session_cache(raw: dict):
@@ -89,6 +128,34 @@ def parse_event(raw: dict):
         SESSION_CACHE.pop(session, None)
     return doc
 
+def _load_offset(current_inode):
+    """Returns a saved byte position to resume from, or None if there's no
+    usable one - either no offset was ever saved, the file is corrupt, or
+    (critically) the saved inode doesn't match the log file's CURRENT
+    inode, meaning a rotation happened while nothing was watching and the
+    saved byte position refers to a now-renamed-away file. In that last
+    case None is correct: falling back to "start from the end" is safer
+    than seeking to some arbitrary byte offset in a completely different
+    file."""
+    try:
+        with open(OFFSET_FILE) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if data.get("inode") != current_inode:
+        return None
+    return data.get("position")
+
+
+def _save_offset(inode, position):
+    # Write-to-temp-then-rename is atomic on POSIX - a crash mid-write
+    # never leaves a half-written, unparseable offset file behind.
+    tmp_path = OFFSET_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump({"inode": inode, "position": position}, f)
+    os.replace(tmp_path, OFFSET_FILE)
+
+
 def watch_log():
     logger.info("Watching Cowrie log: %s", LOG_FILE)
     # Cowrie's logtype=rotating renames the current file away and starts a
@@ -97,7 +164,13 @@ def watch_log():
     # rotation happened under our open file descriptor.
     current_inode = os.stat(LOG_FILE).st_ino
     f = open(LOG_FILE, "r")
-    f.seek(0, 2)  # nhảy đến cuối file
+    saved_position = _load_offset(current_inode)
+    if saved_position is not None:
+        f.seek(saved_position)
+        logger.info("Resuming log_watcher from saved offset %d", saved_position)
+    else:
+        f.seek(0, 2)  # no usable saved offset - nhảy đến cuối file (previous, pre-persistent-offset behavior)
+        logger.info("No usable saved offset - starting from end of file")
     while True:
         try:
             stat = os.stat(LOG_FILE)
@@ -116,6 +189,7 @@ def watch_log():
             continue
         line = line.strip()
         if not line:
+            _save_offset(current_inode, f.tell())
             continue
         try:
             raw = json.loads(line)
@@ -137,7 +211,13 @@ def watch_log():
                     )
                     metrics.LOG_WATCHER_INSERT_ERRORS.inc()
         except json.JSONDecodeError:
-            continue
+            pass
+        # Advance the saved offset past this line regardless of outcome
+        # (inserted, insert failed, or malformed JSON) - matches the
+        # existing best-effort semantics (failures are logged, not
+        # retried) rather than risking an infinite retry loop on a single
+        # poisoned line.
+        _save_offset(current_inode, f.tell())
 
 if __name__ == "__main__":
     start_http_server(METRICS_PORT)

@@ -12,6 +12,33 @@ logger = get_logger(__name__)
 
 METRICS_PORT = 9101
 
+
+def _read_secret(env_name: str):
+    """Reads a secret from <env_name>_FILE (a file path) if set - the
+    Docker Compose `secrets:` convention (see docker-compose.yml) - else
+    falls back to the plain env var, which is what the native venv
+    workflow uses. Duplicated per-file rather than shared, same as the
+    other `_read_secret()`s in this project (see CLAUDE.md)."""
+    file_path = os.getenv(f"{env_name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.getenv(env_name)
+
+
+def _mongo_auth_kwargs() -> dict:
+    """Adds MongoDB username/password auth if MONGO_USERNAME is set - the
+    native venv workflow (mongod with no --auth) never sets it, so this
+    returns {} and pymongo connects exactly as before."""
+    username = _read_secret("MONGO_USERNAME")
+    if not username:
+        return {}
+    return {
+        "username": username,
+        "password": _read_secret("MONGO_PASSWORD"),
+        "authSource": os.getenv("MONGO_AUTH_SOURCE", "admin"),
+    }
+
 # Đường dẫn log Cowrie
 
 LOG_FILE = os.getenv(
@@ -19,8 +46,18 @@ LOG_FILE = os.getenv(
     os.path.expanduser("~/Honeypot-Monitor/honeypot/cowrie-src/var/log/cowrie/cowrie.json"),
 )
 
+# Saved read position - see _load_offset()/_save_offset() below. Lands in
+# the same directory notify_log_setup.py already writes logs/notifier.log
+# to (two levels above this file), which docker-compose.yml already mounts
+# as a persistent volume, so this survives a container recreation, not
+# just an in-process restart.
+OFFSET_FILE = os.getenv(
+    "REALTIME_ALERT_OFFSET_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "realtime_alert.offset.json"),
+)
+
 # Kết nối MongoDB
-client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"), **_mongo_auth_kwargs())
 db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
 
@@ -150,13 +187,45 @@ def process_event(raw: dict):
         logger.info("Sent command-input Telegram alert", extra={"ip": ip, "event": eventid})
         notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
+def _load_offset(current_inode):
+    """Returns a saved byte position to resume from, or None if there's no
+    usable one - either no offset was ever saved, the file is corrupt, or
+    the saved inode doesn't match the log file's CURRENT inode (a rotation
+    happened while nothing was watching, so the saved position refers to a
+    now-renamed-away file - falling back to "start from the end" is safer
+    than seeking to an arbitrary offset in a different file)."""
+    try:
+        with open(OFFSET_FILE) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if data.get("inode") != current_inode:
+        return None
+    return data.get("position")
+
+
+def _save_offset(inode, position):
+    # Write-to-temp-then-rename is atomic on POSIX - a crash mid-write
+    # never leaves a half-written, unparseable offset file behind.
+    tmp_path = OFFSET_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump({"inode": inode, "position": position}, f)
+    os.replace(tmp_path, OFFSET_FILE)
+
+
 def watch_log():
     logger.info("Realtime alert watcher starting, watching %s", LOG_FILE)
 
     import os
     current_inode = os.stat(LOG_FILE).st_ino
     f = open(LOG_FILE, "r")
-    f.seek(0, 2)
+    saved_position = _load_offset(current_inode)
+    if saved_position is not None:
+        f.seek(saved_position)
+        logger.info("Resuming realtime_alert from saved offset %d", saved_position)
+    else:
+        f.seek(0, 2)
+        logger.info("No usable saved offset - starting from end of file")
     while True:
         try:
             stat = os.stat(LOG_FILE)
@@ -172,12 +241,17 @@ def watch_log():
                 continue
             line = line.strip()
             if not line:
+                _save_offset(current_inode, f.tell())
                 continue
             try:
                 raw = json.loads(line)
                 process_event(raw)
             except json.JSONDecodeError:
-                continue
+                pass
+            # Advance regardless of outcome - matches the existing
+            # best-effort semantics (failures are logged, not retried)
+            # rather than risking an infinite retry loop on one bad line.
+            _save_offset(current_inode, f.tell())
         except Exception:
             logger.error("Unexpected error in watch_log loop", exc_info=True)
             time.sleep(5)

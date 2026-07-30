@@ -683,3 +683,35 @@ class TestSecretFileConvention:
         auth = fresh_module("auth")
 
         assert auth.SECRET_KEY == "plain-env-var-secret"
+
+    def test_secrets04_mongo_auth_kwargs_empty_when_no_username_set(
+        self, fresh_module, monkeypatch
+    ):
+        """The native venv workflow (mongod with no --auth) never sets
+        MONGO_USERNAME - _mongo_auth_kwargs() must return {} so
+        MongoClient(url, **{}) connects exactly as it always has."""
+        monkeypatch.delenv("MONGO_USERNAME", raising=False)
+        monkeypatch.setenv("JWT_SECRET_KEY", "irrelevant-for-this-test")
+        monkeypatch.setenv("DASHBOARD_ORIGIN", "http://localhost:8080")
+
+        auth = fresh_module("auth")
+
+        assert auth._mongo_auth_kwargs() == {}
+
+    def test_secrets05_mongo_auth_kwargs_populated_when_username_set(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        password_file = tmp_path / "mongo_password.txt"
+        password_file.write_text("s3cr3t-mongo-password\n")
+        monkeypatch.setenv("MONGO_USERNAME", "honeypot_app")
+        monkeypatch.setenv("MONGO_PASSWORD_FILE", str(password_file))
+        monkeypatch.setenv("JWT_SECRET_KEY", "irrelevant-for-this-test")
+        monkeypatch.setenv("DASHBOARD_ORIGIN", "http://localhost:8080")
+
+        auth = fresh_module("auth")
+
+        assert auth._mongo_auth_kwargs() == {
+            "username": "honeypot_app",
+            "password": "s3cr3t-mongo-password",
+            "authSource": "admin",
+        }

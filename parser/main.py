@@ -47,7 +47,12 @@ app.add_middleware(
 
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "honeypot")
-client     = MongoClient(MONGO_URL)
+# auth.py already defines _mongo_auth_kwargs() (and this file already does
+# `import auth`) - reused here rather than duplicated, since these two
+# files are already tightly coupled siblings within parser/, unlike the
+# parser/notifier boundary where duplication is deliberate (sys.path
+# collision risk, see CLAUDE.md).
+client     = MongoClient(MONGO_URL, **auth._mongo_auth_kwargs())
 db         = client[DB_NAME]
 collection = db["attacks"]
 

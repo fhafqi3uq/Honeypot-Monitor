@@ -77,6 +77,23 @@ if not SECRET_KEY:
         "workflow), or in secrets/jwt_secret_key.txt (Docker Compose)."
     )
 
+
+def _mongo_auth_kwargs() -> dict:
+    """Adds MongoDB username/password auth if MONGO_USERNAME is set -
+    the native venv workflow (mongod with no --auth) never sets it, so
+    this returns {} and pymongo connects exactly as before. Docker
+    Compose's mongo service and every app service opt into auth together
+    (see docker-compose.yml's `secrets:` block) once MONGO_USERNAME/
+    MONGO_PASSWORD (via _read_secret) are both present."""
+    username = _read_secret("MONGO_USERNAME")
+    if not username:
+        return {}
+    return {
+        "username": username,
+        "password": _read_secret("MONGO_PASSWORD"),
+        "authSource": os.getenv("MONGO_AUTH_SOURCE", "admin"),
+    }
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 90
 REFRESH_TOKEN_EXPIRE_DAYS = 7
@@ -107,7 +124,7 @@ DEFAULT_ROLE = ROLE_ADMIN
 # than silently truncating (older bcrypt releases used to truncate).
 MAX_PASSWORD_BYTES = 72
 
-_client = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+_client = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"), **_mongo_auth_kwargs())
 _db = _client[os.getenv("DB_NAME", "honeypot")]
 users_col = _db["users"]
 refresh_tokens_col = _db["refresh_tokens"]

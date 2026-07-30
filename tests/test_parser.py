@@ -143,6 +143,11 @@ def _start_watch_log(module, tmp_path):
     log_path = tmp_path / "cowrie.json"
     log_path.write_text("")
     module.LOG_FILE = str(log_path)
+    # Also isolate the saved-offset file to tmp_path - otherwise every test
+    # would read/write the real repo's logs/log_watcher.offset.json, and
+    # (harmlessly, since the inode never matches a fresh temp file, but
+    # still untidy) leave that file behind after the test run.
+    module.OFFSET_FILE = str(tmp_path / "log_watcher.offset.json")
 
     thread = threading.Thread(target=module.watch_log, daemon=True)
     thread.start()

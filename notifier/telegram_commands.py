@@ -34,7 +34,22 @@ METRICS_PORT = 9104
 
 logger = get_logger(__name__)
 
-client = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+
+def _mongo_auth_kwargs() -> dict:
+    """Adds MongoDB username/password auth if MONGO_USERNAME is set - the
+    native venv workflow (mongod with no --auth) never sets it, so this
+    returns {} and pymongo connects exactly as before."""
+    username = _read_secret("MONGO_USERNAME")
+    if not username:
+        return {}
+    return {
+        "username": username,
+        "password": _read_secret("MONGO_PASSWORD"),
+        "authSource": os.getenv("MONGO_AUTH_SOURCE", "admin"),
+    }
+
+
+client = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"), **_mongo_auth_kwargs())
 db = client[os.getenv("DB_NAME", "honeypot")]
 col = db["attacks"]
 

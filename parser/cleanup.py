@@ -8,7 +8,35 @@ import metrics
 
 METRICS_PORT = 9102
 
-client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"))
+
+def _read_secret(env_name: str):
+    """Reads a secret from <env_name>_FILE (a file path) if set - the
+    Docker Compose `secrets:` convention (see docker-compose.yml) - else
+    falls back to the plain env var, which is what the native venv
+    workflow uses. Duplicated per-file rather than shared, same as the
+    other `_read_secret()`s in this project (see CLAUDE.md)."""
+    file_path = os.getenv(f"{env_name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.getenv(env_name)
+
+
+def _mongo_auth_kwargs() -> dict:
+    """Adds MongoDB username/password auth if MONGO_USERNAME is set - the
+    native venv workflow (mongod with no --auth) never sets it, so this
+    returns {} and pymongo connects exactly as before."""
+    username = _read_secret("MONGO_USERNAME")
+    if not username:
+        return {}
+    return {
+        "username": username,
+        "password": _read_secret("MONGO_PASSWORD"),
+        "authSource": os.getenv("MONGO_AUTH_SOURCE", "admin"),
+    }
+
+
+client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"), **_mongo_auth_kwargs())
 db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
 

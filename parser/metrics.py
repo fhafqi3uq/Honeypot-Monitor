@@ -61,9 +61,10 @@ LOG_WATCHER_INSERT_ERRORS = Counter(
 LOG_WATCHER_LAST_EVENT_TIMESTAMP = Gauge(
     "honeypot_log_watcher_last_event_timestamp_seconds",
     "Unix timestamp log_watcher.py last processed a Cowrie event - a "
-    "stalled or crashed watcher stops advancing this (see the Layer 8 "
-    "restart-resilience test plan finding: no persistent read offset means "
-    "a restart loses whatever arrived during the downtime window)",
+    "stalled or crashed watcher stops advancing this. Events during any "
+    "downtime are recovered once it restarts (see OFFSET_FILE in "
+    "log_watcher.py), but this is still how you'd notice it's down NOW "
+    "rather than after the fact",
 )
 LOG_WATCHER_LOG_ROTATIONS = Counter(
     "honeypot_log_watcher_log_rotations_total",
