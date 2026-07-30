@@ -20,3 +20,8 @@ honeypot/cowrie-src/.git/
 
 # Không push file log Cowrie
 honeypot/cowrie.json
+
+# Local dev-tool state (Claude Code CLI / CodeGraph index) - máy ai người
+# nấy có, không liên quan tới người khác clone repo
+.claude/settings.local.json
+.codegraph/
