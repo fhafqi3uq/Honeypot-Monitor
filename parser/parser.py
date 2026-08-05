@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from pymongo import MongoClient
 from geoip_lookup import get_geo
+from mitre_mapping import map_mitre_techniques
 
 client     = MongoClient("mongodb://localhost:27017")
 db         = client["honeypot"]
@@ -61,6 +62,7 @@ def parse_event(raw: dict) -> dict | None:
         "hassh":           cached.get("hassh"),
         "hasshAlgorithms": cached.get("hasshAlgorithms"),
         "duration":        raw.get("duration") if eventid == "cowrie.session.closed" else None,
+        "mitre_techniques": map_mitre_techniques(eventid, raw.get("input")),
         "sensor":          raw.get("sensor", "honeypot-01"),
         "country":         geo["country"],
         "country_code":    geo["country_code"],

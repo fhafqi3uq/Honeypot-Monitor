@@ -6,6 +6,7 @@ from pymongo import MongoClient
 from prometheus_client import start_http_server
 from bot import alert_login_failed, alert_login_success, alert_command
 from notify_log_setup import get_logger
+from notify_mitre_mapping import map_mitre_techniques
 import notify_metrics
 
 logger = get_logger(__name__)
@@ -138,6 +139,7 @@ def process_event(raw: dict):
         "hassh":           cached.get("hassh"),
         "hasshAlgorithms": cached.get("hasshAlgorithms"),
         "duration":        raw.get("duration") if eventid == "cowrie.session.closed" else None,
+        "mitre_techniques": map_mitre_techniques(eventid, raw.get("input")),
         "sensor":          raw.get("sensor", "honeypot-01"),
         "country":         geo["country"],
         "country_code":    geo["country_code"],

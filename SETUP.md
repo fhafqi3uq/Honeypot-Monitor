@@ -58,7 +58,7 @@ python parser.py
 # Chạy API - LUÔN bind 127.0.0.1, không phải 0.0.0.0: API không có gì chặn
 # port-scan nếu bind ra ngoài, sẽ lộ ngay cho attacker biết đây là hệ thống
 # có giám sát. Nếu cần truy cập dashboard/API từ xa, dùng SSH tunnel/VPN,
-# không mở port này ra internet trực tiếp (xem checklist go-live).
+# không mở port này ra internet trực tiếp (xem GO_LIVE.md ở gốc repo).
 uvicorn main:app --host 127.0.0.1 --port 8000
 
 # Chạy log watcher realtime
