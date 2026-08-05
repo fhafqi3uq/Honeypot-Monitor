@@ -49,11 +49,16 @@ MONGODB_USER=$(cat secrets/mongo_username.txt)
 MONGODB_PASSWORD=$(cat secrets/mongo_password.txt)
 EOF
 
-chmod 600 secrets/*.txt secrets/*.env
+# 644 (không phải 600) - Compose standalone (không phải Swarm) bind-mount
+# thẳng file host vào container ở /run/secrets/<name>, GIỮ NGUYÊN quyền gốc.
+# Container đọc bằng user riêng của image (không phải root, không cùng UID
+# với user host) nên 600 (chỉ chủ sở hữu đọc) làm nó bị "Permission denied"
+# ngay khi khởi động - gặp lỗi này thật trên VPS trước khi sửa thành 644.
+chmod 644 secrets/*.txt secrets/*.env
 
 cat <<EOF
 
-Đã tạo xong secrets/ (8 file, permission 600). Tiếp theo:
+Đã tạo xong secrets/ (8 file, permission 644). Tiếp theo:
   docker compose up -d --build
 
 Nhắc lại: secrets/*.txt và *.env đã gitignore - đừng commit, đừng copy

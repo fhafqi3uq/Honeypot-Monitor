@@ -159,11 +159,18 @@ EOF
 
 # 3. Tải GeoIP database vào parser/geoip/ (giống Bước 4) nếu chưa có
 
-# 4. Build và chạy
+# 4. Build và chạy - mặc định KHÔNG gồm Prometheus/Grafana/mongodb-exporter
+#    (profiles: ["observability"] trong docker-compose.yml) vì trên VPS nhỏ
+#    (1 CPU/1GB RAM) chạy cả 11 container cùng lúc dễ treo máy (gặp thật khi
+#    triển khai VPS trial - xem DEPLOY_LOG.md). Máy đủ mạnh (>=2GB RAM) muốn
+#    có Prometheus/Grafana thì thêm --profile observability vào lệnh dưới.
 docker compose up -d --build
 
 # API:        http://localhost:8000 (127.0.0.1 only)
 # Dashboard:  http://localhost:8080 (127.0.0.1 only)
+#
+# Muốn thêm Prometheus/Grafana (cần >=2GB RAM):
+#   docker compose --profile observability up -d --build
 # Prometheus: http://localhost:9090 (127.0.0.1 only) - theo dõi cả parser-api
 #             lẫn 5 script nền (log_watcher/cleanup/realtime_alert/
 #             daily_report/telegram_commands), mỗi cái tự expose /metrics riêng.

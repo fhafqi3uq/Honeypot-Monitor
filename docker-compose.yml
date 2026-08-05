@@ -270,8 +270,19 @@ services:
     restart: unless-stopped
 
   # --- Observability (Prometheus/Grafana) -----------------------------------
+  # profiles: ["observability"] on all 3 below - a bare `docker compose up -d`
+  # (no --profile flag) skips them entirely. Added after hanging a real 1
+  # CPU/1GB RAM VPS: `docker compose up -d` with no service list pulled in
+  # these 3 alongside mongo + the 7 parser/notifier containers, 11 containers
+  # total pegged the single vCPU hard enough that even opening a new SSH
+  # session timed out (see GO_LIVE.md's low-RAM note - the intent was always
+  # to skip these on small boxes, this makes that the default instead of
+  # something you have to remember to opt out of). Bring them up explicitly
+  # with `docker compose --profile observability up -d` on a box that can
+  # actually afford it (>=2GB RAM).
   mongodb-exporter:
     image: percona/mongodb_exporter:0.44
+    profiles: ["observability"]
     command:
       - "--mongodb.uri=mongodb://mongo:27017"
       - "--collector.diagnosticdata"
@@ -289,6 +300,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.13.2
+    profiles: ["observability"]
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -301,6 +313,7 @@ services:
 
   grafana:
     image: grafana/grafana:13.1.1
+    profiles: ["observability"]
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

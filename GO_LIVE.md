@@ -132,7 +132,10 @@ local:
    ```
 2. Cowrie vẫn chạy native (không đổi) — `cd honeypot/cowrie-src && ... &&
    cowrie-env/bin/cowrie start` — rồi `docker compose up -d --build` như
-   SETUP.md đã ghi.
+   SETUP.md đã ghi. Mặc định lệnh này **không** chạy Prometheus/Grafana/
+   mongodb-exporter (`profiles: ["observability"]` trong
+   `docker-compose.yml`) — đúng ý "bỏ Prometheus + Grafana" ở mục RAM thấp
+   phía trên, giờ là hành vi mặc định chứ không cần tự nhớ bỏ bớt service.
 
 ---
 
