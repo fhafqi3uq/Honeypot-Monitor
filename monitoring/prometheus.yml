@@ -34,6 +34,23 @@ scrape_configs:
     static_configs:
       - targets: ["notifier-telegram-commands:9104"]
 
+  - job_name: honeypot-backup
+    static_configs:
+      - targets: ["parser-backup:9105"]
+
+  - job_name: honeypot-weekly-report
+    static_configs:
+      - targets: ["notifier-weekly-report:9106"]
+
+  - job_name: honeypot-http-honeypot-alert
+    static_configs:
+      - targets: ["notifier-http-honeypot-alert:9107"]
+
+  - job_name: honeypot-http-honeypot
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["parser-http-honeypot:9108"]
+
   - job_name: mongodb
     static_configs:
       - targets: ["mongodb-exporter:9216"]

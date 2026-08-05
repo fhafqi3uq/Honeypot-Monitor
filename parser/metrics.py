@@ -110,6 +110,24 @@ BACKUP_DELETED_TOTAL = Counter(
     "honeypot_backup_deleted_total", "Old backup archives deleted by the retention policy"
 )
 
+# --- http_honeypot.py (exposed on its own /metrics, port 9108 - see its
+# __main__ block; it's an HTTP server itself but for the fake login page,
+# not this metrics endpoint) -------------------------------------------------
+HTTP_HONEYPOT_EVENTS_PROCESSED = Counter(
+    "honeypot_http_honeypot_events_processed_total",
+    "Requests successfully inserted into MongoDB by http_honeypot.py",
+    ["event"],
+)
+HTTP_HONEYPOT_INSERT_ERRORS = Counter(
+    "honeypot_http_honeypot_insert_errors_total",
+    "MongoDB insert failures encountered by http_honeypot.py",
+)
+HTTP_HONEYPOT_LAST_EVENT_TIMESTAMP = Gauge(
+    "honeypot_http_honeypot_last_event_timestamp_seconds",
+    "Unix timestamp http_honeypot.py last processed a request - a stalled "
+    "or crashed service stops advancing this",
+)
+
 _current_mongo_stats_collector = None
 
 

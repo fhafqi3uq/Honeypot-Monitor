@@ -25,9 +25,13 @@ from datetime import datetime, timezone
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from prometheus_client import start_http_server
 from pymongo import MongoClient
 
+import metrics
+
 INTERNAL_PORT = int(os.getenv("HTTP_HONEYPOT_PORT", "8899"))
+METRICS_PORT = int(os.getenv("HTTP_HONEYPOT_METRICS_PORT", "9108"))
 
 # Paths that get the fake login page instead of a generic 404 - matches
 # both the specific bait path already planted in Cowrie's fake filesystem
@@ -150,7 +154,10 @@ def _log_event(request: Request, event: str, username: str = None, password: str
     try:
         collection.insert_one(doc)
     except Exception:
-        pass  # best-effort logging - never let a Mongo hiccup break the response
+        metrics.HTTP_HONEYPOT_INSERT_ERRORS.inc()
+        return  # best-effort logging - never let a Mongo hiccup break the response
+    metrics.HTTP_HONEYPOT_EVENTS_PROCESSED.labels(event).inc()
+    metrics.HTTP_HONEYPOT_LAST_EVENT_TIMESTAMP.set(time.time())
 
 
 @app.get("/robots.txt")
@@ -188,4 +195,5 @@ async def catch_all_post(full_path: str, request: Request):
 
 
 if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
     uvicorn.run(app, host="0.0.0.0", port=INTERNAL_PORT, log_level="warning")

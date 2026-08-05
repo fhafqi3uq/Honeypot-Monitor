@@ -126,3 +126,28 @@ class TestLoggedDocumentSchema:
         monkeypatch.setattr(http_honeypot.collection, "insert_one", _boom)
         res = client.get("/admin/login.php")
         assert res.status_code == 200
+
+
+class TestMetrics:
+    def test_successful_insert_increments_events_processed(self, client, http_honeypot):
+        before = http_honeypot.metrics.HTTP_HONEYPOT_EVENTS_PROCESSED.labels("http.request")._value.get()
+
+        client.get("/admin/login.php")
+
+        after = http_honeypot.metrics.HTTP_HONEYPOT_EVENTS_PROCESSED.labels("http.request")._value.get()
+        assert after == before + 1
+
+    def test_insert_failure_increments_insert_errors_not_events_processed(
+        self, client, http_honeypot, monkeypatch
+    ):
+        def _boom(*args, **kwargs):
+            raise RuntimeError("mongo is down")
+
+        monkeypatch.setattr(http_honeypot.collection, "insert_one", _boom)
+        before_errors = http_honeypot.metrics.HTTP_HONEYPOT_INSERT_ERRORS._value.get()
+        before_processed = http_honeypot.metrics.HTTP_HONEYPOT_EVENTS_PROCESSED.labels("http.request")._value.get()
+
+        client.get("/admin/login.php")
+
+        assert http_honeypot.metrics.HTTP_HONEYPOT_INSERT_ERRORS._value.get() == before_errors + 1
+        assert http_honeypot.metrics.HTTP_HONEYPOT_EVENTS_PROCESSED.labels("http.request")._value.get() == before_processed

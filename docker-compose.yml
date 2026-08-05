@@ -32,9 +32,10 @@
 #
 # Observability: mongodb-exporter + prometheus + grafana. parser-api exposes
 # its own /metrics; log_watcher.py/cleanup.py/realtime_alert.py/
-# daily_report.py/telegram_commands.py each expose their own /metrics too
+# daily_report.py/telegram_commands.py/backup.py/weekly_report.py/
+# http_honeypot_alert.py/http_honeypot.py each expose their own /metrics too
 # (prometheus_client.start_http_server(), since none of them are otherwise
-# HTTP servers - ports 9100-9104, see each script's METRICS_PORT constant
+# HTTP servers - ports 9100-9108, see each script's METRICS_PORT constant
 # and monitoring/prometheus.yml's scrape_configs). Grafana auto-provisions
 # the Prometheus datasource and a starter "Honeypot Monitor - Overview"
 # dashboard from monitoring/grafana/ - open http://localhost:3000
@@ -190,6 +191,56 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  parser-http-honeypot:
+    build: ./parser
+    command: ["python", "http_honeypot.py"]
+    env_file: ./parser/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
+      GEOIP_DB_PATH: /app/geoip/GeoLite2-City.mmdb
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+    secrets:
+      - mongo_app_username
+      - mongo_app_password
+    # 8899 (the fake login page itself) is NOT published to the host here -
+    # in the native start.sh workflow it's NAT'd from public port 80 (see
+    # deploy/expose_webtrap_port80.sh); this container-only deployment path
+    # doesn't attempt that, so it's reachable inside the Compose network
+    # only unless you add your own port mapping. 9108 is its own /metrics.
+    expose: ["9108"]
+    volumes:
+      - ./parser/geoip:/app/geoip:ro
+      - ./logs/parser:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  parser-backup:
+    build: ./parser
+    command: ["python", "backup.py"]
+    env_file: ./parser/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
+      BACKUP_DIR: /backups
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+    secrets:
+      - mongo_app_username
+      - mongo_app_password
+    expose: ["9105"]  # own /metrics - see backup.py's METRICS_PORT
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
   notifier-realtime-alert:
     build: ./notifier
     command: ["python", "-u", "realtime_alert.py"]
@@ -236,6 +287,56 @@ services:
     volumes:
       - ./honeypot/cowrie-src/var/log/cowrie:/cowrie-log:ro
       - ./logs/notifier:/logs
+    restart: unless-stopped
+
+  notifier-weekly-report:
+    build: ./notifier
+    command: ["python", "-u", "weekly_report.py"]
+    env_file: ./notifier/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
+      TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+    secrets:
+      - telegram_token
+      - telegram_chat_id
+      - mongo_app_username
+      - mongo_app_password
+    expose: ["9106"]  # own /metrics - see weekly_report.py's METRICS_PORT
+    volumes:
+      - ./logs/notifier:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notifier-http-honeypot-alert:
+    build: ./notifier
+    command: ["python", "-u", "http_honeypot_alert.py"]
+    env_file: ./notifier/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: honeypot
+      MONGO_AUTH_SOURCE: honeypot
+      TELEGRAM_TOKEN_FILE: /run/secrets/telegram_token
+      TELEGRAM_CHAT_ID_FILE: /run/secrets/telegram_chat_id
+      MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+    secrets:
+      - telegram_token
+      - telegram_chat_id
+      - mongo_app_username
+      - mongo_app_password
+    expose: ["9107"]  # own /metrics - see http_honeypot_alert.py's METRICS_PORT
+    volumes:
+      - ./logs/notifier:/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
   notifier-telegram-commands:

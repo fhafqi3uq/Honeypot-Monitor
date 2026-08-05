@@ -212,6 +212,14 @@ ssh -p <ADMIN_SSH_PORT> -L 8080:127.0.0.1:8080 -L 8000:127.0.0.1:8000 \
   ngày gần nhất (`BACKUP_RETENTION_DAYS`). Cần cài `mongodb-database-tools`
   trước (xem `SETUP.md`) để có lệnh `mongodump` — nếu thiếu, `backup.py` tự
   log lỗi rõ ràng thay vì crash, không chặn các service khác.
+- `parser/http_honeypot.py` (trang login giả) tự nó KHÔNG gửi Telegram —
+  chỉ ghi Mongo với `alerted: false`. `notifier/http_honeypot_alert.py`
+  (chạy sẵn qua `start.sh`) poll Mongo mỗi 5 giây để bắt các
+  `http.login.attempt` chưa alerted và bắn Telegram — nếu process này chết
+  mà không ai để ý, honeypot vẫn ghi nhận đầy đủ nhưng bạn sẽ không được
+  báo real-time (phát hiện đúng vấn đề này lúc live-test 2026-08-05).
+  `healthcheck.sh` đã có check riêng cho cả `http_honeypot.py` lẫn
+  `http_honeypot_alert.py`, tự khởi động lại nếu chết.
 
 ---
 
