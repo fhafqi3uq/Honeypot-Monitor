@@ -42,6 +42,7 @@ from typing import Optional
 
 import bcrypt
 import jwt
+import pyotp
 from dotenv import load_dotenv
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from pymongo import MongoClient, ReturnDocument
@@ -97,6 +98,7 @@ def _mongo_auth_kwargs() -> dict:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 90
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+PENDING_2FA_TOKEN_EXPIRE_MINUTES = 5
 
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_ATTEMPT_WINDOW_MINUTES = 15
@@ -219,6 +221,45 @@ def create_refresh_token(username: str) -> str:
         {"jti": jti, "username": username, "expires_at": expires_at}
     )
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_pending_2fa_token(username: str) -> str:
+    """Issued once a password check succeeds for a user that has 2FA
+    enabled, in place of the real access/refresh tokens - proves "this
+    browser just proved it knows the password" without granting a real
+    session until POST /auth/2fa/verify also checks out. Deliberately not
+    tracked in Mongo like refresh tokens are: its 5-minute lifetime is
+    short enough that server-side revocation isn't worth the complexity."""
+    now = _now()
+    payload = {
+        "sub": username,
+        "type": "pending_2fa",
+        "iat": now,
+        "exp": now + timedelta(minutes=PENDING_2FA_TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def get_totp_uri(username: str, secret: str) -> str:
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="Honeypot Monitor")
+
+
+def verify_totp_code(secret: Optional[str], code: Optional[str]) -> bool:
+    """valid_window=1 accepts the current 30s step plus one step of clock
+    drift either side - matches how most authenticator apps/servers pair
+    TOTP in practice, since phone/server clocks are rarely perfectly
+    synced."""
+    if not secret or not code:
+        return False
+    try:
+        return pyotp.totp.TOTP(secret).verify(code, valid_window=1)
+    except Exception:
+        # Malformed code (non-numeric, wrong length, ...) - reject, don't 500.
+        return False
 
 
 def decode_token(token: str, expected_type: str) -> dict:
@@ -469,6 +510,21 @@ def _get_access_payload(
 
 def get_current_user(payload: dict = Depends(_get_access_payload)) -> str:
     return payload["sub"]
+
+
+def get_pending_2fa_payload(
+    pending_2fa_token: Optional[str] = Cookie(default=None),
+) -> dict:
+    """Dependency for POST /auth/2fa/verify - the browser proved the
+    password already (see create_pending_2fa_token()); this just confirms
+    that proof is present and not expired before checking the TOTP code
+    itself."""
+    if not pending_2fa_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Chưa xác thực mật khẩu hoặc phiên xác thực 2 lớp đã hết hạn",
+        )
+    return decode_token(pending_2fa_token, expected_type="pending_2fa")
 
 
 def require_admin(payload: dict = Depends(_get_access_payload)) -> str:

@@ -33,12 +33,13 @@
     .btn-login:hover{filter:brightness(1.08);transform:translateY(-1px)}
     .btn-login:disabled{background:var(--surface-2);filter:none;cursor:not-allowed;transform:none}
     .login-error{background:var(--critical-soft);color:#f3a3a0;border-radius:var(--radius-sm);padding:10px 12px;font-size:13px;margin-bottom:16px;display:none;position:relative}
+    .totp-input{text-align:center;font-size:20px;letter-spacing:6px}
   </style>
 </head>
 <body>
   <div class="login-card">
     <div class="login-logo">🍯 Honeypot Monitor</div>
-    <div class="login-sub">Đăng nhập để xem dashboard</div>
+    <div class="login-sub" id="login-sub">Đăng nhập để xem dashboard</div>
 
     <div class="login-error" id="login-error"></div>
 
@@ -53,13 +54,23 @@
       </div>
       <button type="submit" class="btn-login" id="btn-login">Đăng nhập</button>
     </form>
+
+    <form id="totp-form" style="display:none">
+      <div class="login-field">
+        <label for="totp-code">Mã xác thực 2 lớp (6 số)</label>
+        <input type="text" id="totp-code" class="totp-input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" required/>
+      </div>
+      <button type="submit" class="btn-login" id="btn-totp">Xác nhận</button>
+    </form>
   </div>
 
   <script src="js/data.js"></script>
   <script>
     const form      = document.getElementById('login-form')
+    const totpForm  = document.getElementById('totp-form')
     const errorBox  = document.getElementById('login-error')
     const btn       = document.getElementById('btn-login')
+    const btnTotp   = document.getElementById('btn-totp')
 
     function showError(message) {
       errorBox.textContent = message
@@ -82,17 +93,53 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
         })
+        const data = await res.json().catch(() => ({}))
+        if (res.ok && data.status === '2fa_required') {
+          form.style.display = 'none'
+          totpForm.style.display = 'block'
+          document.getElementById('login-sub').textContent = 'Nhập mã từ app xác thực 2 lớp'
+          document.getElementById('totp-code').focus()
+          return
+        }
         if (res.ok) {
           window.location.href = 'index.html'
           return
         }
-        const data = await res.json().catch(() => ({}))
         showError(data.detail || 'Đăng nhập thất bại. Vui lòng thử lại.')
       } catch {
         showError('Không kết nối được tới máy chủ. Vui lòng thử lại.')
       } finally {
         btn.disabled = false
         btn.textContent = 'Đăng nhập'
+      }
+    })
+
+    totpForm.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      errorBox.style.display = 'none'
+      btnTotp.disabled = true
+      btnTotp.textContent = 'Đang xác nhận...'
+
+      const code = document.getElementById('totp-code').value.trim()
+
+      try {
+        const res = await fetch(`${API_URL}/auth/2fa/verify`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        })
+        if (res.ok) {
+          window.location.href = 'index.html'
+          return
+        }
+        const data = await res.json().catch(() => ({}))
+        showError(data.detail || 'Mã không đúng. Vui lòng thử lại.')
+      } catch {
+        showError('Không kết nối được tới máy chủ. Vui lòng thử lại.')
+      } finally {
+        btnTotp.disabled = false
+        btnTotp.textContent = 'Xác nhận'
       }
     })
   </script>

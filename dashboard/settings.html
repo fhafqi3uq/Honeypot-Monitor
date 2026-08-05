@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Cài đặt — Honeypot</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <style>
+    .totp-secret{
+      font-family:'SFMono-Regular',Consolas,monospace;font-size:16px;letter-spacing:2px;
+      background:var(--bg);border:1px solid var(--border-strong);border-radius:var(--radius-sm);
+      padding:12px 16px;word-break:break-all;color:var(--blue);margin:12px 0;
+    }
+    .totp-code-input{
+      background:var(--bg);border:1px solid var(--border-strong);color:var(--ink);
+      padding:10px 14px;border-radius:var(--radius-sm);font-size:18px;letter-spacing:4px;
+      text-align:center;width:160px;outline:none;
+    }
+    .totp-code-input:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+    .field-msg{font-size:13px;margin-top:10px;display:none}
+    .field-msg.error{color:#f3a3a0;display:block}
+    .field-msg.ok{color:#8fe3a0;display:block}
+  </style>
+</head>
+<body style="visibility:hidden">
+  <div class="sidebar" id="sidebar">
+    <div class="logo">🍯 <span class="logo-text">Honeypot</span></div>
+    <nav>
+      <a href="index.html" class="nav-item">📊 <span>Dashboard</span></a>
+      <a href="attacks.html" class="nav-item">🔴 <span>Tấn công</span></a>
+      <a href="stats.html" class="nav-item">📈 <span>Thống kê</span></a>
+      <a href="map.html" class="nav-item">🗺️ <span>Bản đồ</span></a>
+      <a href="search.html" class="nav-item">🔍 <span>Tìm kiếm IP</span></a>
+      <a href="settings.html" class="nav-item active">⚙️ <span>Cài đặt</span></a>
+    </nav>
+    <div class="status">🟢 <span>Đang giám sát</span></div>
+    <button class="btn-logout" onclick="logout()">🚪 <span>Đăng xuất</span></button>
+  </div>
+
+  <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+
+  <div class="main" id="main">
+    <div class="header">
+      <div>
+        <h1>⚙️ Cài đặt</h1>
+        <p>Bảo mật tài khoản đăng nhập dashboard</p>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:520px">
+      <h3>🔐 Xác thực 2 lớp (2FA)</h3>
+      <p id="totp-status" style="font-size:13px;color:var(--ink-muted);margin-bottom:16px">Đang tải...</p>
+
+      <!-- Trạng thái: CHƯA bật -->
+      <div id="totp-disabled-panel" style="display:none">
+        <button onclick="startSetup()" class="btn-refresh" id="btn-start-setup">🔑 Bật 2FA</button>
+
+        <div id="totp-setup-panel" style="display:none;margin-top:20px">
+          <p style="font-size:13px;color:var(--ink-secondary)">
+            Mở app xác thực (Google Authenticator, Authy...) → chọn "Nhập mã thủ công" (Enter setup key) →
+            dán mã bên dưới vào:
+          </p>
+          <div class="totp-secret" id="totp-secret"></div>
+          <p style="font-size:13px;color:var(--ink-secondary);margin-bottom:8px">
+            Sau đó nhập mã 6 số app vừa tạo ra để xác nhận:
+          </p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <input id="confirm-code" class="totp-code-input" maxlength="6" inputmode="numeric" placeholder="000000"/>
+            <button onclick="confirmSetup()" class="btn-refresh">✓ Xác nhận</button>
+          </div>
+          <div id="setup-msg" class="field-msg"></div>
+        </div>
+      </div>
+
+      <!-- Trạng thái: ĐÃ bật -->
+      <div id="totp-enabled-panel" style="display:none">
+        <p style="color:#8fe3a0;font-size:14px;margin-bottom:16px">✅ 2FA đang bật cho tài khoản này.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input id="disable-password" type="password" class="totp-code-input" style="letter-spacing:normal;font-size:14px;width:200px" placeholder="Nhập lại mật khẩu"/>
+          <button onclick="disableTotp()" class="btn-refresh" style="background:var(--critical-soft);color:#f3a3a0">🚫 Tắt 2FA</button>
+        </div>
+        <div id="disable-msg" class="field-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/escape.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    requireAuth()
+
+    async function loadTotpStatus() {
+      try {
+        const res  = await authFetch(`${API_URL}/auth/2fa/status`)
+        const data = await res.json()
+        document.getElementById('totp-disabled-panel').style.display = data.totp_enabled ? 'none' : 'block'
+        document.getElementById('totp-enabled-panel').style.display  = data.totp_enabled ? 'block' : 'none'
+        document.getElementById('totp-status').textContent =
+          data.totp_enabled ? 'Tài khoản đã bật xác thực 2 lớp.' : 'Tài khoản chưa bật xác thực 2 lớp — chỉ cần username/password để đăng nhập.'
+      } catch {
+        document.getElementById('totp-status').textContent = 'Không tải được trạng thái 2FA.'
+      }
+    }
+
+    async function startSetup() {
+      const res = await authFetch(`${API_URL}/auth/2fa/setup`, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': getCsrfToken() || '' },
+      }).catch(() => null)
+      if (!res || !res.ok) {
+        alert('Không tạo được mã 2FA, thử lại sau.')
+        return
+      }
+      const data = await res.json()
+      document.getElementById('totp-secret').textContent = data.secret
+      document.getElementById('totp-setup-panel').style.display = 'block'
+      document.getElementById('btn-start-setup').style.display = 'none'
+    }
+
+    async function confirmSetup() {
+      const code = document.getElementById('confirm-code').value.trim()
+      const msg  = document.getElementById('setup-msg')
+      msg.className = 'field-msg'
+      if (!code) return
+
+      const res = await fetch(`${API_URL}/auth/2fa/confirm`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() || '' },
+        body: JSON.stringify({ code }),
+      })
+      if (res.ok) {
+        msg.textContent = '✓ Đã bật 2FA thành công!'
+        msg.className = 'field-msg ok'
+        setTimeout(loadTotpStatus, 1200)
+      } else {
+        const data = await res.json().catch(() => ({}))
+        msg.textContent = data.detail || 'Mã không đúng, thử lại.'
+        msg.className = 'field-msg error'
+      }
+    }
+
+    async function disableTotp() {
+      const password = document.getElementById('disable-password').value
+      const msg = document.getElementById('disable-msg')
+      msg.className = 'field-msg'
+      if (!password) return
+
+      const res = await fetch(`${API_URL}/auth/2fa/disable`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() || '' },
+        body: JSON.stringify({ password }),
+      })
+      if (res.ok) {
+        document.getElementById('disable-password').value = ''
+        loadTotpStatus()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        msg.textContent = data.detail || 'Không tắt được 2FA.'
+        msg.className = 'field-msg error'
+      }
+    }
+
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open')
+    }
+
+    loadTotpStatus()
+  </script>
+</body>
+</html>

@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import jwt
+import pyotp
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -95,6 +96,180 @@ class TestLogin:
             f"nonexistent-user path {nonexistent_user_time * 1000:.2f}ms avg - "
             "gap large enough it might leak whether a username exists"
         )
+
+
+# ---------------------------------------------------------------------------
+# TOTP-based 2FA: opt-in second factor added on top of the existing
+# username/password + JWT-cookie flow above. Disabled by default (every
+# existing login test above keeps passing unmodified) - a user must
+# explicitly go through setup -> confirm to turn it on.
+# ---------------------------------------------------------------------------
+def _enable_totp(auth_module, username) -> str:
+    """Directly enables 2FA for a user with a known secret, bypassing the
+    setup/confirm HTTP round-trip - most tests below care about what
+    happens once 2FA is ON, not the enabling flow itself (covered
+    separately in TestTwoFactorSetup)."""
+    secret = pyotp.random_base32()
+    auth_module.users_col.update_one(
+        {"username": username}, {"$set": {"totp_secret": secret, "totp_enabled": True}}
+    )
+    return secret
+
+
+class TestTwoFactorLogin:
+    def test_2fa01_login_with_2fa_disabled_is_unaffected(self, fresh_app):
+        """Regression guard: a user who never enabled 2FA logs in exactly
+        as every other pre-2FA test in this file expects."""
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+
+        r = client.post("/auth/login", json={"username": username, "password": password})
+
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+        assert client.cookies.get("access_token")
+
+    def test_2fa02_login_with_2fa_enabled_withholds_real_session(self, fresh_app):
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+        _enable_totp(auth, username)
+
+        r = client.post("/auth/login", json={"username": username, "password": password})
+
+        assert r.status_code == 200
+        assert r.json() == {"status": "2fa_required"}
+        assert client.cookies.get("pending_2fa_token")
+        assert client.cookies.get("access_token") is None
+        assert client.cookies.get("refresh_token") is None
+
+    def test_2fa03_correct_code_completes_login(self, fresh_app):
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+        secret = _enable_totp(auth, username)
+        client.post("/auth/login", json={"username": username, "password": password})
+
+        r = client.post("/auth/2fa/verify", json={"code": pyotp.TOTP(secret).now()})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert client.cookies.get("access_token")
+        assert client.cookies.get("refresh_token")
+
+    def test_2fa04_wrong_code_is_rejected_no_session_issued(self, fresh_app):
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+        secret = _enable_totp(auth, username)
+        client.post("/auth/login", json={"username": username, "password": password})
+
+        r = client.post("/auth/2fa/verify", json={"code": "000000"})
+
+        assert r.status_code == 401
+        assert client.cookies.get("access_token") is None
+
+    def test_2fa05_verify_without_a_pending_token_is_rejected(self, fresh_app):
+        """Skipping straight to /auth/2fa/verify without ever posting a
+        correct password first (no pending_2fa_token cookie) must fail -
+        otherwise 2FA wouldn't actually be a SECOND factor."""
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+        secret = _enable_totp(auth, username)
+
+        r = client.post("/auth/2fa/verify", json={"code": pyotp.TOTP(secret).now()})
+
+        assert r.status_code == 401
+
+    def test_2fa06_wrong_password_never_reaches_2fa_stage(self, fresh_app):
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+        _enable_totp(auth, username)
+
+        r = client.post("/auth/login", json={"username": username, "password": "wrong"})
+
+        assert r.status_code == 401
+        assert client.cookies.get("pending_2fa_token") is None
+
+
+class TestTwoFactorSetup:
+    def _login(self, fresh_app):
+        client, main, auth = fresh_app
+        username, password = _register_user(auth)
+        r = client.post("/auth/login", json={"username": username, "password": password})
+        csrf = r.json()["csrf_token"]
+        return client, main, auth, username, csrf
+
+    def test_2fa07_status_defaults_to_disabled(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+
+        r = client.get("/auth/2fa/status")
+
+        assert r.json() == {"totp_enabled": False}
+
+    def test_2fa08_setup_returns_a_secret_but_does_not_enable_yet(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+
+        r = client.post("/auth/2fa/setup", headers={"X-CSRF-Token": csrf})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["secret"]
+        assert "otpauth://" in body["otpauth_uri"]
+        user_doc = auth.users_col.find_one({"username": username})
+        assert user_doc["totp_secret"] == body["secret"]
+        assert user_doc["totp_enabled"] is False
+
+    def test_2fa09_confirm_with_correct_code_enables_2fa(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+        setup = client.post("/auth/2fa/setup", headers={"X-CSRF-Token": csrf}).json()
+
+        r = client.post(
+            "/auth/2fa/confirm",
+            json={"code": pyotp.TOTP(setup["secret"]).now()},
+            headers={"X-CSRF-Token": csrf},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["totp_enabled"] is True
+        assert client.get("/auth/2fa/status").json()["totp_enabled"] is True
+
+    def test_2fa10_confirm_with_wrong_code_leaves_2fa_disabled(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+        client.post("/auth/2fa/setup", headers={"X-CSRF-Token": csrf})
+
+        r = client.post("/auth/2fa/confirm", json={"code": "000000"}, headers={"X-CSRF-Token": csrf})
+
+        assert r.status_code == 401
+        assert client.get("/auth/2fa/status").json()["totp_enabled"] is False
+
+    def test_2fa11_disable_with_correct_password_turns_2fa_off(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+        _enable_totp(auth, username)
+
+        r = client.post(
+            "/auth/2fa/disable", json={"password": "S3cure!Pass123"}, headers={"X-CSRF-Token": csrf}
+        )
+
+        assert r.status_code == 200
+        assert r.json()["totp_enabled"] is False
+        assert client.get("/auth/2fa/status").json()["totp_enabled"] is False
+
+    def test_2fa12_disable_with_wrong_password_is_rejected_2fa_stays_on(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+        _enable_totp(auth, username)
+
+        r = client.post(
+            "/auth/2fa/disable", json={"password": "totally-wrong"}, headers={"X-CSRF-Token": csrf}
+        )
+
+        assert r.status_code == 401
+        assert client.get("/auth/2fa/status").json()["totp_enabled"] is True
+
+    def test_2fa13_setup_confirm_disable_require_csrf(self, fresh_app):
+        client, main, auth, username, csrf = self._login(fresh_app)
+
+        assert client.post("/auth/2fa/setup").status_code == 403
+        assert client.post("/auth/2fa/confirm", json={"code": "123456"}).status_code == 403
+        assert client.post("/auth/2fa/disable", json={"password": "x"}).status_code == 403
 
 
 # ---------------------------------------------------------------------------

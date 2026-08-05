@@ -132,6 +132,43 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class TotpCodeRequest(BaseModel):
+    code: str
+
+
+class DisableTotpRequest(BaseModel):
+    password: str
+
+
+def _issue_session(response: Response, username: str) -> dict:
+    """Shared by the direct-login path (2FA disabled) and POST
+    /auth/2fa/verify (2FA enabled, code just checked out) - both end the
+    same way: real access/refresh/csrf cookies, and any leftover
+    pending_2fa_token cookie cleared."""
+    role = auth.get_user_role(username)
+    access_token = auth.create_access_token(username, role)
+    refresh_token = auth.create_refresh_token(username)
+    csrf_token = auth.new_csrf_token()
+
+    response.set_cookie(
+        "access_token", access_token,
+        max_age=auth.ACCESS_TOKEN_EXPIRE_MINUTES * 60, **COOKIE_KWARGS,
+    )
+    response.set_cookie(
+        "refresh_token", refresh_token,
+        max_age=auth.REFRESH_TOKEN_EXPIRE_DAYS * 86400, **COOKIE_KWARGS,
+    )
+    # Not httpOnly - the frontend JS must be able to read this one and echo
+    # it back as a header for the double-submit CSRF check to work.
+    response.set_cookie(
+        "csrf_token", csrf_token,
+        max_age=auth.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        httponly=False, samesite="lax", secure=False, path="/",
+    )
+    response.delete_cookie("pending_2fa_token", path="/")
+    return {"status": "ok", "username": username, "role": role, "csrf_token": csrf_token}
+
+
 @app.post("/auth/login")
 def login(payload: LoginRequest, request: Request, response: Response):
     ip = auth.client_ip(request)
@@ -151,34 +188,111 @@ def login(payload: LoginRequest, request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Sai thông tin đăng nhập")
 
     auth.reset_attempts(ip, payload.username)
+
+    user_doc = auth.users_col.find_one({"username": payload.username})
+    if user_doc and user_doc.get("totp_enabled"):
+        # Password correct, but the login isn't complete until POST
+        # /auth/2fa/verify also succeeds - no real session cookies yet, and
+        # no auth_log/audit entry until then either (a password-only login
+        # isn't actually "in").
+        pending_token = auth.create_pending_2fa_token(payload.username)
+        response.set_cookie(
+            "pending_2fa_token", pending_token,
+            max_age=auth.PENDING_2FA_TOKEN_EXPIRE_MINUTES * 60, **COOKIE_KWARGS,
+        )
+        logger.info(
+            "Password OK, 2FA code required for user '%s'", payload.username,
+            extra={"ip": ip, "username": payload.username, "endpoint": "/auth/login"},
+        )
+        return {"status": "2fa_required"}
+
     auth.log_auth_event(ip, payload.username, success=True, user_agent=user_agent)
     metrics.LOGIN_ATTEMPTS.labels("success").inc()
     logger.info(
         "Successful login for user '%s'", payload.username,
         extra={"ip": ip, "username": payload.username, "endpoint": "/auth/login"},
     )
+    return _issue_session(response, payload.username)
 
-    role = auth.get_user_role(payload.username)
-    access_token = auth.create_access_token(payload.username, role)
-    refresh_token = auth.create_refresh_token(payload.username)
-    csrf_token = auth.new_csrf_token()
 
-    response.set_cookie(
-        "access_token", access_token,
-        max_age=auth.ACCESS_TOKEN_EXPIRE_MINUTES * 60, **COOKIE_KWARGS,
+@app.post("/auth/2fa/verify")
+def verify_2fa(
+    payload: TotpCodeRequest,
+    request: Request,
+    response: Response,
+    pending_payload: dict = Depends(auth.get_pending_2fa_payload),
+):
+    username = pending_payload["sub"]
+    ip = auth.client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
+
+    user_doc = auth.users_col.find_one({"username": username})
+    secret = user_doc.get("totp_secret") if user_doc else None
+
+    if not auth.verify_totp_code(secret, payload.code):
+        logger.warning(
+            "Failed 2FA code for user '%s'", username,
+            extra={"ip": ip, "username": username, "endpoint": "/auth/2fa/verify"},
+        )
+        raise HTTPException(status_code=401, detail="Mã xác thực không đúng")
+
+    auth.log_auth_event(ip, username, success=True, user_agent=user_agent)
+    metrics.LOGIN_ATTEMPTS.labels("success").inc()
+    logger.info(
+        "2FA verified, login complete for user '%s'", username,
+        extra={"ip": ip, "username": username, "endpoint": "/auth/2fa/verify"},
     )
-    response.set_cookie(
-        "refresh_token", refresh_token,
-        max_age=auth.REFRESH_TOKEN_EXPIRE_DAYS * 86400, **COOKIE_KWARGS,
+    return _issue_session(response, username)
+
+
+@app.post("/auth/2fa/setup")
+def setup_2fa(user: str = Depends(auth.get_current_user), _csrf: None = Depends(auth.verify_csrf)):
+    """Generates a fresh TOTP secret and stores it as NOT-yet-enabled -
+    POST /auth/2fa/confirm with a valid current code is what actually
+    turns 2FA on, so a secret that was generated but never confirmed
+    (e.g. the user closed the tab) can't silently lock them out."""
+    secret = auth.generate_totp_secret()
+    auth.users_col.update_one(
+        {"username": user}, {"$set": {"totp_secret": secret, "totp_enabled": False}}
     )
-    # Not httpOnly - the frontend JS must be able to read this one and echo
-    # it back as a header for the double-submit CSRF check to work.
-    response.set_cookie(
-        "csrf_token", csrf_token,
-        max_age=auth.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        httponly=False, samesite="lax", secure=False, path="/",
+    return {"secret": secret, "otpauth_uri": auth.get_totp_uri(user, secret)}
+
+
+@app.post("/auth/2fa/confirm")
+def confirm_2fa(
+    payload: TotpCodeRequest,
+    user: str = Depends(auth.get_current_user),
+    _csrf: None = Depends(auth.verify_csrf),
+):
+    user_doc = auth.users_col.find_one({"username": user})
+    secret = user_doc.get("totp_secret") if user_doc else None
+    if not auth.verify_totp_code(secret, payload.code):
+        raise HTTPException(status_code=401, detail="Mã xác thực không đúng")
+    auth.users_col.update_one({"username": user}, {"$set": {"totp_enabled": True}})
+    return {"status": "ok", "totp_enabled": True}
+
+
+@app.post("/auth/2fa/disable")
+def disable_2fa(
+    payload: DisableTotpRequest,
+    user: str = Depends(auth.get_current_user),
+    _csrf: None = Depends(auth.verify_csrf),
+):
+    """Requires the current password again (not just an active session) -
+    an attacker who stole a logged-in browser's cookies but not the
+    password shouldn't be able to turn off the second factor."""
+    if not auth.authenticate_user(user, payload.password):
+        raise HTTPException(status_code=401, detail="Sai mật khẩu")
+    auth.users_col.update_one(
+        {"username": user}, {"$unset": {"totp_secret": "", "totp_enabled": ""}}
     )
-    return {"status": "ok", "username": payload.username, "role": role, "csrf_token": csrf_token}
+    return {"status": "ok", "totp_enabled": False}
+
+
+@app.get("/auth/2fa/status")
+def get_2fa_status(user: str = Depends(auth.get_current_user)):
+    user_doc = auth.users_col.find_one({"username": user})
+    return {"totp_enabled": bool(user_doc and user_doc.get("totp_enabled"))}
 
 
 @app.post("/auth/logout")
