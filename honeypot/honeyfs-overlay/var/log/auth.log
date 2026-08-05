@@ -1,0 +1,6 @@
+Apr 15 02:14:03 svr04 sshd[1892]: Accepted publickey for deploy from 10.0.0.20 port 51322 ssh2
+Apr 15 03:00:01 svr04 CRON[2001]: pam_unix(cron:session): session opened for user root
+Apr 15 03:00:01 svr04 CRON[2001]: pam_unix(cron:session): session closed for user root
+Apr 15 06:41:57 svr04 sudo: deploy : TTY=pts/0 ; PWD=/var/www/html ; USER=root ; COMMAND=/usr/bin/systemctl restart apache2
+Apr 15 09:12:44 svr04 sshd[2210]: Failed password for root from 185.220.101.45 port 40912 ssh2
+Apr 15 09:12:47 svr04 sshd[2210]: Failed password for root from 185.220.101.45 port 40912 ssh2

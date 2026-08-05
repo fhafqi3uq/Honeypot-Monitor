@@ -1,0 +1,11 @@
+[production]
+DB_HOST=10.0.0.5
+DB_USER=root
+DB_PASS=Sup3rS3cr3t!
+DB_NAME=production
+
+[staging]  
+DB_HOST=10.0.0.6
+DB_USER=admin
+DB_PASS=St@ging_Pass2026
+DB_NAME=staging

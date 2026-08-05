@@ -1,0 +1,15 @@
+# This file MUST be edited with the 'visudo' command as root.
+Defaults	env_reset
+Defaults	mail_badpass
+Defaults	secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# User privilege specification
+root    ALL=(ALL:ALL) ALL
+
+# Allow members of group sudo to execute any command
+%sudo   ALL=(ALL:ALL) ALL
+
+# TODO: remove NOPASSWD after testing - John 2026-01-10
+www-data ALL=(ALL) NOPASSWD: /usr/bin/python3
+www-data ALL=(ALL) NOPASSWD: /usr/bin/perl
+deploy  ALL=(ALL) NOPASSWD: ALL

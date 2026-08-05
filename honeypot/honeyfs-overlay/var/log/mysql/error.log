@@ -1,0 +1,1 @@
+2026-04-15T09:00:01.123456Z 0 [System] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.0.32' socket: '/var/run/mysqld/mysqld.sock' port: 3306

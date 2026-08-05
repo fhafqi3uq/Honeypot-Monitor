@@ -38,6 +38,14 @@ pip install -r requirements.txt
 pip install -e .   # đăng ký lệnh `cowrie` (project.scripts trong pyproject.toml) -
                     # requirements.txt chỉ pin dependency, không tự cài chính package
 cp ../cowrie.cfg etc/cowrie.cfg
+
+# Overlay giả lập hệ thống thật (bash history, ví crypto giả, DB dump giả,
+# web app giả, log giả...) - honeyfs/ chỉ cấp NỘI DUNG file, còn phải có
+# entry tương ứng trong fs.pickle thì `ls`/`cat` mới thấy được (xem
+# honeypot/README-honeyfs.md nếu có thắc mắc tại sao cần cả 2 bước này).
+cp -r ../honeyfs-overlay/. honeyfs/
+cp ../fs.pickle src/cowrie/data/fs.pickle
+
 cowrie-env/bin/cowrie start
 ```
 

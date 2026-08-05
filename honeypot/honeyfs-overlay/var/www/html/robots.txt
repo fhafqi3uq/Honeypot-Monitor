@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /admin/
+Disallow: /backup/
+Disallow: /api/
+Disallow: /uploads/
+Disallow: /config.php.bak
+Disallow: /.env

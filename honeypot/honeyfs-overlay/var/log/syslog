@@ -1,0 +1,6 @@
+Apr 15 03:00:01 svr04 systemd[1]: Starting Daily apt download activities...
+Apr 15 03:00:03 svr04 systemd[1]: apt-daily.service: Deactivated successfully.
+Apr 15 06:41:58 svr04 systemd[1]: Reloading apache2.service - The Apache HTTP Server...
+Apr 15 06:41:59 svr04 systemd[1]: Reloaded apache2.service - The Apache HTTP Server.
+Apr 15 08:00:00 svr04 CRON[3344]: (root) CMD (/opt/payment/daily_report.py)
+Apr 15 12:05:12 svr04 mysqld[456]: [Warning] Aborted connection 8821 to db: 'payment_db' user: 'root' host: '10.0.0.6'

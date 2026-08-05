@@ -7,6 +7,9 @@ venv/
 # Logs
 *.log
 *.json.gz
+# ...except the decoy log files that are Cowrie honeyfs bait content, not
+# real runtime logs - see honeypot/README-honeyfs.md
+!honeypot/honeyfs-overlay/**/*.log
 
 # log_watcher.py/realtime_alert.py's saved read-offset state (see
 # OFFSET_FILE in each) - real per-machine runtime state, not project content
@@ -14,6 +17,7 @@ venv/
 
 # Sensitive
 .env
+!honeypot/honeyfs-overlay/**/.env
 *.mmdb
 secrets/*.txt
 secrets/mongodb_exporter.env
