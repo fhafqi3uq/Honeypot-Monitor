@@ -69,6 +69,14 @@ source venv/bin/activate
 pkill -f http_honeypot.py 2>/dev/null; nohup python3 -u http_honeypot.py > /tmp/http_honeypot.log 2>&1 &
 echo "✅ HTTP honeypot started (nội bộ :8899)"
 
+# HTTP honeypot alert watcher (poll Mongo cho http.login.attempt chưa
+# alerted, bắn Telegram + đánh dấu alerted=true - http_honeypot.py ở trên
+# chỉ ghi Mongo, không tự gửi Telegram)
+cd "$PROJECT_DIR/notifier"
+source venv/bin/activate
+pkill -f http_honeypot_alert.py 2>/dev/null; nohup python3 -u http_honeypot_alert.py > /tmp/http_honeypot_alert.log 2>&1 &
+echo "✅ HTTP honeypot alert watcher started"
+
 # Healthcheck mỗi 30 giây
 pkill -f "while true.*healthcheck" 2>/dev/null
 nohup bash -c 'while true; do bash $PROJECT_DIR/healthcheck.sh >> /tmp/healthcheck.log 2>&1; sleep 30; done' > /dev/null 2>&1 &

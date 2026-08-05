@@ -145,6 +145,24 @@ def alert_login_success(ip: str, username: str, password: str):
     )
     return send_message(msg)
 
+def alert_http_login_attempt(ip: str, username: str, password: str, path: str):
+    """Fired by notifier/http_honeypot_alert.py for a parser/http_honeypot.py
+    login submission - the HTTP-side equivalent of alert_login_failed()
+    above. Always a "failed" attempt in spirit (the fake login page never
+    actually authenticates anyone), so reuses the same severity label."""
+    info = get_ip_info(ip)
+    label, _ = get_severity("cowrie.login.failed", info['abuse_score'])
+    msg = (
+        f"{label} (HTTP)\n━━━━━━━━━━━━━━━\n"
+        f"🌐 IP: <code>{_esc(ip)}</code> (Score: {info['abuse_score']})\n"
+        f"📍 Vị trí: <b>{_esc(info['location'])}</b>\n"
+        f"🏢 ISP: <i>{_esc(info['isp'])}</i>\n"
+        f"🔗 Path: <code>{_esc(path)}</code>\n"
+        f"👤 User: <code>{_esc(username)}</code>\n"
+        f"🔑 Pass: <code>{_esc(password)}</code>"
+    )
+    return send_message(msg)
+
 MAX_COMMANDS_SHOWN = 25
 
 def alert_session_commands(ip: str, commands: list):

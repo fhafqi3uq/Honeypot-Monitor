@@ -73,6 +73,12 @@ WEEKLY_REPORT_SEND_FAILURES = Counter(
     "honeypot_weekly_report_send_failures_total", "Weekly report runs where the Telegram send failed"
 )
 
+# --- http_honeypot_alert.py --------------------------------------------------
+HTTP_HONEYPOT_ALERT_PROCESSED = Counter(
+    "honeypot_http_honeypot_alert_processed_total",
+    "http.login.attempt documents claimed and processed by http_honeypot_alert.py",
+)
+
 # --- telegram_commands.py ---------------------------------------------------
 TELEGRAM_COMMANDS_PROCESSED = Counter(
     "honeypot_telegram_commands_processed_total",

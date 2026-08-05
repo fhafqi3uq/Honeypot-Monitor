@@ -643,6 +643,95 @@ class TestTelegramCommands:
 
 
 # ---------------------------------------------------------------------------
+# notifier/http_honeypot_alert.py - polls Mongo for http.login.attempt docs
+# parser/http_honeypot.py inserted with alerted=False and fires Telegram for
+# each, since http_honeypot.py itself only writes to MongoDB (no Cowrie-style
+# log file to tail the way realtime_alert.py does for the SSH/Telnet side).
+# ---------------------------------------------------------------------------
+class TestHttpHoneypotAlert:
+    def test_hha01_pending_login_attempt_triggers_alert_and_flips_alerted(
+        self, fresh_module, monkeypatch
+    ):
+        http_honeypot_alert = fresh_module("http_honeypot_alert")
+        doc = http_honeypot_alert.collection.insert_one({
+            "event": "http.login.attempt", "src_ip": "203.0.113.7",
+            "username": "admin", "password": "toor123", "path": "/admin/login.php",
+            "alerted": False,
+        }).inserted_id
+        mock_alert = Mock(return_value=True)
+        monkeypatch.setattr(http_honeypot_alert, "alert_http_login_attempt", mock_alert)
+
+        http_honeypot_alert.process_pending_login_attempts()
+
+        mock_alert.assert_called_once_with("203.0.113.7", "admin", "toor123", "/admin/login.php")
+        stored = http_honeypot_alert.collection.find_one({"_id": doc})
+        assert stored["alerted"] is True
+
+    def test_hha02_already_alerted_docs_are_not_reprocessed(self, fresh_module, monkeypatch):
+        http_honeypot_alert = fresh_module("http_honeypot_alert")
+        http_honeypot_alert.collection.insert_one({
+            "event": "http.login.attempt", "src_ip": "203.0.113.7",
+            "username": "admin", "password": "x", "path": "/admin", "alerted": True,
+        })
+        mock_alert = Mock(return_value=True)
+        monkeypatch.setattr(http_honeypot_alert, "alert_http_login_attempt", mock_alert)
+
+        http_honeypot_alert.process_pending_login_attempts()
+
+        mock_alert.assert_not_called()
+
+    def test_hha03_other_event_types_are_ignored(self, fresh_module, monkeypatch):
+        http_honeypot_alert = fresh_module("http_honeypot_alert")
+        http_honeypot_alert.collection.insert_one({
+            "event": "http.request", "src_ip": "203.0.113.7",
+            "username": None, "password": None, "path": "/.env", "alerted": False,
+        })
+        mock_alert = Mock(return_value=True)
+        monkeypatch.setattr(http_honeypot_alert, "alert_http_login_attempt", mock_alert)
+
+        http_honeypot_alert.process_pending_login_attempts()
+
+        mock_alert.assert_not_called()
+
+    def test_hha04_cooldown_suppresses_telegram_but_still_marks_alerted(
+        self, fresh_module, monkeypatch
+    ):
+        """Two login attempts from the same IP within the cooldown window -
+        only the first fires Telegram, but BOTH docs get alerted=True so
+        neither is retried forever."""
+        http_honeypot_alert = fresh_module("http_honeypot_alert")
+        ids = http_honeypot_alert.collection.insert_many([
+            {"event": "http.login.attempt", "src_ip": "203.0.113.7",
+             "username": "a", "password": "1", "path": "/admin", "alerted": False},
+            {"event": "http.login.attempt", "src_ip": "203.0.113.7",
+             "username": "b", "password": "2", "path": "/admin", "alerted": False},
+        ]).inserted_ids
+        mock_alert = Mock(return_value=True)
+        monkeypatch.setattr(http_honeypot_alert, "alert_http_login_attempt", mock_alert)
+
+        http_honeypot_alert.process_pending_login_attempts()
+
+        assert mock_alert.call_count == 1
+        for doc_id in ids:
+            assert http_honeypot_alert.collection.find_one({"_id": doc_id})["alerted"] is True
+
+    def test_hha05_metrics_increment_correctly(self, fresh_module, monkeypatch):
+        http_honeypot_alert = fresh_module("http_honeypot_alert")
+        http_honeypot_alert.collection.insert_one({
+            "event": "http.login.attempt", "src_ip": "203.0.113.7",
+            "username": "admin", "password": "x", "path": "/admin", "alerted": False,
+        })
+        monkeypatch.setattr(http_honeypot_alert, "alert_http_login_attempt", Mock(return_value=True))
+        before_processed = http_honeypot_alert.notify_metrics.HTTP_HONEYPOT_ALERT_PROCESSED._value.get()
+        before_sent = http_honeypot_alert.notify_metrics.TELEGRAM_ALERTS_SENT.labels("http.login.attempt")._value.get()
+
+        http_honeypot_alert.process_pending_login_attempts()
+
+        assert http_honeypot_alert.notify_metrics.HTTP_HONEYPOT_ALERT_PROCESSED._value.get() == before_processed + 1
+        assert http_honeypot_alert.notify_metrics.TELEGRAM_ALERTS_SENT.labels("http.login.attempt")._value.get() == before_sent + 1
+
+
+# ---------------------------------------------------------------------------
 # AL-11: schema drift between log_watcher.py and realtime_alert.py
 # ---------------------------------------------------------------------------
 class TestSchemaConsistency:
