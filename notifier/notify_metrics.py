@@ -61,6 +61,18 @@ DAILY_REPORT_SEND_FAILURES = Counter(
     "honeypot_daily_report_send_failures_total", "Daily report runs where the Telegram send failed"
 )
 
+# --- weekly_report.py --------------------------------------------------------
+WEEKLY_REPORT_RUNS = Counter(
+    "honeypot_weekly_report_runs_total", "Number of times the weekly report job has run"
+)
+WEEKLY_REPORT_LAST_SUCCESS_TIMESTAMP = Gauge(
+    "honeypot_weekly_report_last_success_timestamp_seconds",
+    "Unix timestamp of the last successfully-sent weekly report",
+)
+WEEKLY_REPORT_SEND_FAILURES = Counter(
+    "honeypot_weekly_report_send_failures_total", "Weekly report runs where the Telegram send failed"
+)
+
 # --- telegram_commands.py ---------------------------------------------------
 TELEGRAM_COMMANDS_PROCESSED = Counter(
     "honeypot_telegram_commands_processed_total",

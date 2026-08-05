@@ -12,7 +12,7 @@ notifier/.env holds real credentials on disk.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -426,6 +426,101 @@ class TestDailyReportFallback:
         assert "&lt;img src=x onerror=alert(1)&gt;" in sent_text
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in sent_text
         assert "&lt;b&gt;rm -rf /&lt;/b&gt;" in sent_text
+
+
+# ---------------------------------------------------------------------------
+# notifier/weekly_report.py - Mongo-backed weekly rollup + Telegram send
+# ---------------------------------------------------------------------------
+class TestWeeklyReport:
+    def _iso(self, days_ago: float) -> str:
+        return (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    def test_wr01_compile_report_splits_this_week_vs_previous_week(self, fresh_module):
+        weekly_report = fresh_module("weekly_report")
+        weekly_report.collection.insert_many([
+            {"timestamp": self._iso(2), "src_ip": "203.0.113.7", "event": "cowrie.login.failed",
+             "country": "Vietnam", "mitre_techniques": ["T1110"]},
+            {"timestamp": self._iso(3), "src_ip": "198.51.100.9", "event": "cowrie.login.success",
+             "country": "Germany", "mitre_techniques": ["T1110", "T1078"]},
+            # Outside the 7-day window entirely - must not count anywhere
+            {"timestamp": self._iso(30), "src_ip": "1.2.3.4", "event": "cowrie.login.failed",
+             "country": "China", "mitre_techniques": ["T1110"]},
+            # Previous week (8-14 days ago)
+            {"timestamp": self._iso(10), "src_ip": "9.9.9.9", "event": "cowrie.login.failed",
+             "country": "Russia", "mitre_techniques": ["T1110"]},
+        ])
+
+        data = weekly_report.compile_weekly_report()
+
+        assert data["total_this_week"] == 2
+        assert data["total_prev_week"] == 1
+        assert data["unique_ips"] == 2
+        assert data["login_success"] == 1
+        assert data["login_failed"] == 1
+        assert {c["_id"] for c in data["top_countries"]} == {"Vietnam", "Germany"}
+        techniques = {t["_id"]: t["count"] for t in data["top_techniques"]}
+        assert techniques == {"T1110": 2, "T1078": 1}
+
+    def test_wr02_send_report_success_updates_metrics(self, fresh_module, monkeypatch):
+        weekly_report = fresh_module("weekly_report")
+        weekly_report.collection.insert_one({
+            "timestamp": self._iso(1), "src_ip": "203.0.113.7", "event": "cowrie.login.failed",
+            "country": "Vietnam", "mitre_techniques": ["T1110"],
+        })
+        mock_send = Mock(return_value=True)
+        monkeypatch.setattr(weekly_report, "send_message", mock_send)
+
+        weekly_report.send_weekly_report()
+
+        mock_send.assert_called_once()
+        sent_text = mock_send.call_args.args[0]
+        assert "BÁO CÁO HONEYPOT HÀNG TUẦN" in sent_text
+        assert "Vietnam" in sent_text
+        assert "T1110" in sent_text
+
+    def test_wr03_send_failure_increments_failure_counter_not_success_gauge(
+        self, fresh_module, monkeypatch
+    ):
+        weekly_report = fresh_module("weekly_report")
+        mock_send = Mock(return_value=False)
+        monkeypatch.setattr(weekly_report, "send_message", mock_send)
+        before = weekly_report.notify_metrics.WEEKLY_REPORT_SEND_FAILURES._value.get()
+
+        weekly_report.send_weekly_report()
+
+        mock_send.assert_called_once()
+        assert weekly_report.notify_metrics.WEEKLY_REPORT_SEND_FAILURES._value.get() == before + 1
+
+    def test_wr04_html_injection_in_country_name_is_escaped(self, fresh_module, monkeypatch):
+        weekly_report = fresh_module("weekly_report")
+        weekly_report.collection.insert_one({
+            "timestamp": self._iso(1), "src_ip": "203.0.113.7", "event": "cowrie.login.failed",
+            "country": "<script>alert(1)</script>", "mitre_techniques": [],
+        })
+        mock_send = Mock(return_value=True)
+        monkeypatch.setattr(weekly_report, "send_message", mock_send)
+
+        weekly_report.send_weekly_report()
+
+        sent_text = mock_send.call_args.args[0]
+        assert "<script>alert(1)</script>" not in sent_text
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in sent_text
+
+    def test_wr05_no_data_this_week_sends_report_with_empty_placeholders(
+        self, fresh_module, monkeypatch
+    ):
+        """Unlike daily_report.py (which sends nothing when there's no log
+        file at all), weekly_report.py always sends - "0 events this week"
+        is itself useful information, not an error condition."""
+        weekly_report = fresh_module("weekly_report")
+        mock_send = Mock(return_value=True)
+        monkeypatch.setattr(weekly_report, "send_message", mock_send)
+
+        weekly_report.send_weekly_report()
+
+        mock_send.assert_called_once()
+        sent_text = mock_send.call_args.args[0]
+        assert "Chưa có dữ liệu" in sent_text
 
 
 # ---------------------------------------------------------------------------

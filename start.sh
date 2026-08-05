@@ -39,6 +39,10 @@ echo "✅ Realtime Alert started"
 pkill -f daily_report.py 2>/dev/null; nohup python3 -u daily_report.py > /tmp/daily.log 2>&1 &
 echo "✅ Daily Report started (8h sáng mỗi ngày)"
 
+# Weekly Report
+pkill -f weekly_report.py 2>/dev/null; nohup python3 -u weekly_report.py > /tmp/weekly.log 2>&1 &
+echo "✅ Weekly Report started (8h30 sáng thứ Hai hàng tuần)"
+
 # Auto cleanup
 cd "$PROJECT_DIR/parser"
 source venv/bin/activate
