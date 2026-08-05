@@ -52,14 +52,17 @@ public — giá trị thật giữ ở `DEPLOY_LOG.local.md` (gitignored, không
    icacls "E:\sshkey-88735220.pem" /remove "BUILTIN\Users"
    ```
 
-## Firewall (ufw) — đã hoàn tất (Phần 3)
+## Firewall (ufw) — đã hoàn tất (Phần 3), sửa lại 2026-08-05 (xem vướng mắc #7, #8)
 
 ```
 Status: active
 Default: deny (incoming), allow (outgoing)
 <ADMIN_SSH_PORT>/tcp  ALLOW IN  Anywhere   # admin ssh (real)
-22/tcp                ALLOW IN  Anywhere   # cowrie honeypot
+2222/tcp              ALLOW IN  Anywhere   # cowrie honeypot ssh (internal, NAT target)
+2223/tcp              ALLOW IN  Anywhere   # cowrie honeypot telnet (internal, NAT target)
 ```
+Allow đúng **cổng nội bộ** (2222/2223), không phải cổng public (22/23) —
+xem vướng mắc #8 để biết lý do.
 
 ## Đã xong — code repo (Phần 1)
 
@@ -102,6 +105,17 @@ Default: deny (incoming), allow (outgoing)
   Dùng cron `@reboot` thay vì viết systemd unit riêng cho từng service, đơn
   giản hơn nhiều cho quy mô dự án này.
 
+## Đã xong — Telnet honeypot (tăng traffic thật) — 2026-08-05
+
+- `[telnet] enabled = true` trong `cowrie.cfg`, nghe `2223` nội bộ, NAT
+  `23 → 2223` bằng `deploy/expose_cowrie_port23.sh`. Verify: `telnet
+  <VPS_IP> 23` từ máy khác thấy banner `Debian GNU/Linux 12` giả, không
+  phải telnetd thật. Lý do mở thêm: nhiều botnet IoT/router quét cổng 23
+  tích cực hơn cả SSH — tăng lượng traffic tấn công thật thu được.
+- Alert Telegram cho lệnh (`cowrie.command.input`) đã đổi từ "1 tin mỗi
+  lệnh" sang "1 tin tóm tắt khi session đóng" (`alert_session_commands`,
+  commit `67ac6141`) — tránh dội tin khi 1 phiên chạy nhiều lệnh recon.
+
 ## Chưa làm — bước tiếp theo
 
 - **Quan trọng**: nâng cấp lên gói trả phí trước **07:00 08-08-2026**, không
@@ -139,3 +153,24 @@ Default: deny (incoming), allow (outgoing)
    không xuất hiện trong `cowrie-env/bin/` nếu chỉ chạy
    `pip install -r requirements.txt`. Đã vá trong `SETUP.md` (commit
    `ade3bb31`).
+7. **`ufw` bị hỏng âm thầm sau khi cài lại (Rebuild) — `ufw status` báo
+   `active` nhưng `sudo iptables -S` cho thấy `-P INPUT ACCEPT`** (đáng lẽ
+   phải là DROP khi ufw thật sự bật). `sudo ufw allow <port>` báo lỗi mơ hồ
+   `ERROR: problem running` không có chi tiết gì thêm. Nghĩa là các chain
+   của ufw đã được tạo trong kernel nhưng bước đặt chính sách mặc định
+   (phần "bật" thật sự) chưa bao giờ hoàn tất — VPS gần như không có tường
+   lửa nào đang chặn (may mắn dashboard/API/Mongo vẫn an toàn vì tự bind
+   `127.0.0.1` ở tầng ứng dụng). Fix: `sudo ufw --force reset` (backup rule
+   cũ tự động) rồi chạy lại `deploy/setup_firewall.sh` từ đầu — không tìm
+   ra nguyên nhân gốc chính xác gây ra trạng thái nửa-vời này, nhưng reset
+   sạch rồi apply lại luôn giải quyết được.
+8. **Rule ufw allow cổng PUBLIC (22/23) không có tác dụng gì — phải allow
+   cổng NỘI BỘ Cowrie (2222/2223)**. iptables xử lý PREROUTING (nơi NAT
+   REDIRECT 22→2222/23→2223 xảy ra) TRƯỚC bảng filter/INPUT (nơi ufw áp
+   rule) — khi gói tin tới được INPUT, đích đã bị đổi thành 2222/2223 rồi,
+   nên `ufw allow 22/tcp` không bao giờ khớp gói tin nào (kiểm chứng bằng
+   `sudo iptables -L ufw-user-input -n -v`: 0 packet hit dù có traffic thật
+   liên tục). Bug này "chạy được" trong nhiều giờ chỉ vì vướng mắc #7 (ufw
+   default ACCEPT) che giấu nó - vá xong #7 thì #8 mới lộ ra (SSH/Telnet
+   vào Cowrie đột nhiên timeout dù NAT + Cowrie đều chạy đúng). Đã sửa
+   `deploy/setup_firewall.sh` để allow đúng cổng nội bộ mặc định.

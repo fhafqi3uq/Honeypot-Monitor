@@ -1,23 +1,28 @@
 #!/bin/bash
 # Cấu hình ufw cho VPS public: chỉ mở cổng SSH thật (đã đổi khỏi 22, xem
-# GO_LIVE.md phần 2) và 2 cổng Cowrie - SSH giả (mặc định 22) và Telnet giả
-# (mặc định 23, honeypot.cfg's [telnet] enabled=true - nhiều botnet IoT/router
-# quét Telnet nhiều hơn SSH, mở thêm cổng này giúp thu được nhiều traffic
-# hơn). Mọi cổng khác (dashboard 8080, API 8000, Mongo 27017, Prometheus
-# 9090, Grafana 3000) đã tự bind 127.0.0.1 trong docker-compose.yml nên
-# không lộ ra ngoài dù không có rule ufw riêng - script này chỉ deny-by-
-# default để phòng thủ theo chiều sâu (defense in depth), không phải điều
-# kiện cần.
+# GO_LIVE.md phần 2) và 2 cổng Cowrie - SSH giả và Telnet giả (mặc định
+# 2222/2223, honeypot.cfg's [ssh]/[telnet] listen_endpoints - nhiều botnet
+# IoT/router quét Telnet nhiều hơn SSH, mở thêm cổng này giúp thu được
+# nhiều traffic hơn).
 #
-# Dùng: sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_PORT=22] [COWRIE_TELNET_PORT=23]
+# QUAN TRỌNG: allow đúng CỔNG NỘI BỘ Cowrie (2222/2223), KHÔNG PHẢI cổng
+# public (22/23). iptables xử lý PREROUTING (nơi expose_cowrie_port22.sh/
+# port23.sh làm REDIRECT 22->2222, 23->2223) TRƯỚC bảng filter/INPUT (nơi
+# ufw áp rule) - nghĩa là khi gói tin tới được INPUT, đích của nó ĐÃ bị đổi
+# thành 2222/2223 rồi, nên rule "allow 22/tcp" không bao giờ khớp được gì
+# cả (0 packet, đã kiểm chứng thật trên VPS). Bug này từng "chạy được" chỉ
+# vì lúc đó ufw bị hỏng (default policy ACCEPT thay vì DROP) nên không
+# thực sự chặn gì - vá xong bug ufw thì bug allow-sai-cổng này mới lộ ra.
+#
+# Dùng: sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_INTERNAL_PORT=2222] [COWRIE_TELNET_INTERNAL_PORT=2223]
 set -euo pipefail
 
 ADMIN_SSH_PORT="${1:?Thiếu ADMIN_SSH_PORT - xem GO_LIVE.md phần 2 (cổng SSH thật, PHẢI khác 22)}"
-COWRIE_PORT="${2:-22}"
-COWRIE_TELNET_PORT="${3:-23}"
+COWRIE_SSH_INTERNAL_PORT="${2:-2222}"
+COWRIE_TELNET_INTERNAL_PORT="${3:-2223}"
 
-if [ "$ADMIN_SSH_PORT" = "$COWRIE_PORT" ] || [ "$ADMIN_SSH_PORT" = "$COWRIE_TELNET_PORT" ]; then
-    echo "LỖI: ADMIN_SSH_PORT không được trùng cổng Cowrie ($COWRIE_PORT/$COWRIE_TELNET_PORT)." >&2
+if [ "$ADMIN_SSH_PORT" = "$COWRIE_SSH_INTERNAL_PORT" ] || [ "$ADMIN_SSH_PORT" = "$COWRIE_TELNET_INTERNAL_PORT" ]; then
+    echo "LỖI: ADMIN_SSH_PORT không được trùng cổng nội bộ Cowrie ($COWRIE_SSH_INTERNAL_PORT/$COWRIE_TELNET_INTERNAL_PORT)." >&2
     echo "SSH thật và Cowrie phải là các cổng khác nhau." >&2
     exit 1
 fi
@@ -30,11 +35,11 @@ fi
 echo "==> Allow cổng SSH thật: $ADMIN_SSH_PORT/tcp"
 ufw allow "${ADMIN_SSH_PORT}/tcp" comment 'admin ssh (real)'
 
-echo "==> Allow cổng Cowrie SSH giả (honeypot công khai): $COWRIE_PORT/tcp"
-ufw allow "${COWRIE_PORT}/tcp" comment 'cowrie honeypot ssh'
+echo "==> Allow cổng Cowrie SSH nội bộ (đích sau NAT redirect từ 22): $COWRIE_SSH_INTERNAL_PORT/tcp"
+ufw allow "${COWRIE_SSH_INTERNAL_PORT}/tcp" comment 'cowrie honeypot ssh (internal, NAT target)'
 
-echo "==> Allow cổng Cowrie Telnet giả (honeypot công khai): $COWRIE_TELNET_PORT/tcp"
-ufw allow "${COWRIE_TELNET_PORT}/tcp" comment 'cowrie honeypot telnet'
+echo "==> Allow cổng Cowrie Telnet nội bộ (đích sau NAT redirect từ 23): $COWRIE_TELNET_INTERNAL_PORT/tcp"
+ufw allow "${COWRIE_TELNET_INTERNAL_PORT}/tcp" comment 'cowrie honeypot telnet (internal, NAT target)'
 
 echo "==> Default deny incoming, allow outgoing"
 ufw default deny incoming
@@ -49,9 +54,13 @@ cat <<EOF
 
 Đã bật ufw với:
   - $ADMIN_SSH_PORT/tcp mở (SSH thật)
-  - $COWRIE_PORT/tcp mở (Cowrie honeypot SSH)
-  - $COWRIE_TELNET_PORT/tcp mở (Cowrie honeypot Telnet)
+  - $COWRIE_SSH_INTERNAL_PORT/tcp mở (Cowrie SSH - đích sau NAT từ cổng 22 public)
+  - $COWRIE_TELNET_INTERNAL_PORT/tcp mở (Cowrie Telnet - đích sau NAT từ cổng 23 public)
   - Mọi cổng khác bị chặn từ bên ngoài
+
+Chạy script này TRƯỚC deploy/expose_cowrie_port22.sh + expose_cowrie_port23.sh
+hoặc sau đều được - thứ tự không quan trọng, chỉ cần cả 2 cùng có mặt để
+traffic public 22/23 thật sự chạm được tới Cowrie.
 
 QUAN TRỌNG: đừng đóng session SSH hiện tại cho tới khi bạn đã mở một
 session SSH MỚI tới cổng $ADMIN_SSH_PORT và xác nhận vào được thành công.
