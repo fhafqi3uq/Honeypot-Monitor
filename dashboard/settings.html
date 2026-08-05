@@ -109,7 +109,7 @@
         headers: { 'X-CSRF-Token': getCsrfToken() || '' },
       }).catch(() => null)
       if (!res || !res.ok) {
-        alert('Không tạo được mã 2FA, thử lại sau.')
+        alert(`Không tạo được mã 2FA (HTTP ${res ? res.status : 'network error'}), thử lại sau.`)
         return
       }
       const data = await res.json()
