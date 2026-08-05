@@ -51,6 +51,12 @@ source venv/bin/activate
 pkill -f telegram_commands.py 2>/dev/null; nohup python3 -u telegram_commands.py > /tmp/commands.log 2>&1 &
 echo "✅ Telegram Commands started (/stats /top /brute /help)"
 
+# Auto backup MongoDB (mongodump, 02:00 mỗi ngày, giữ 7 ngày gần nhất)
+cd "$PROJECT_DIR/parser"
+source venv/bin/activate
+pkill -f backup.py 2>/dev/null; nohup python3 -u backup.py > /tmp/backup.log 2>&1 &
+echo "✅ Auto backup MongoDB started (dump lúc 02:00 mỗi ngày)"
+
 # Healthcheck mỗi 30 giây
 pkill -f "while true.*healthcheck" 2>/dev/null
 nohup bash -c 'while true; do bash $PROJECT_DIR/healthcheck.sh >> /tmp/healthcheck.log 2>&1; sleep 30; done' > /dev/null 2>&1 &

@@ -31,6 +31,10 @@ honeypot/cowrie-src/.git/
 # Không push file log Cowrie
 honeypot/cowrie.json
 
+# MongoDB backup archives (parser/backup.py) - real captured attacker data,
+# never push this to a public repo
+backups/
+
 # Local dev-tool state (Claude Code CLI / CodeGraph index) - máy ai người
 # nấy có, không liên quan tới người khác clone repo
 .claude/settings.local.json

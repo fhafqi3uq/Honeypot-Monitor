@@ -193,8 +193,11 @@ ssh -p <ADMIN_SSH_PORT> -L 8080:127.0.0.1:8080 -L 8000:127.0.0.1:8000 \
 - Honeypot công khai nhận traffic nhiều hơn hẳn local — theo dõi dung lượng
   đĩa (`df -h`) trong tuần đầu, `cleanup.py` đã tự xoá dữ liệu >30 ngày
   nhưng log Cowrie thô có thể tích luỹ nhanh hơn dự kiến ban đầu.
-- Backup MongoDB định kỳ (`mongodump`) nếu dữ liệu thu được có giá trị cho
-  báo cáo — không có cơ chế backup tự động nào trong repo hiện tại.
+- Backup MongoDB định kỳ: `parser/backup.py` (chạy sẵn qua `start.sh`) tự
+  `mongodump` lúc 02:00 mỗi ngày vào `~/Honeypot-Monitor/backups/`, giữ 7
+  ngày gần nhất (`BACKUP_RETENTION_DAYS`). Cần cài `mongodb-database-tools`
+  trước (xem `SETUP.md`) để có lệnh `mongodump` — nếu thiếu, `backup.py` tự
+  log lỗi rõ ràng thay vì crash, không chặn các service khác.
 
 ---
 

@@ -15,6 +15,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 
@@ -325,6 +326,85 @@ class TestCleanup:
 
         remaining = {p.name for p in tmp_path.iterdir()}
         assert remaining == {"cowrie.json", "cowrie.log", "cowrie.json.2026-07-29"}
+
+
+# ---------------------------------------------------------------------------
+# backup.py: mongodump-based automated backup + retention. subprocess.run is
+# always mocked here - backup.py shells out to a real `mongodump` binary
+# rather than going through pymongo, so it's the one script in this project
+# that ISN'T covered by conftest.py's `_never_touch_real_mongo` MongoClient
+# patch. Never let a test invoke the real binary against a real mongod.
+# ---------------------------------------------------------------------------
+class TestBackup:
+    def _mock_mongodump_success(self, monkeypatch, backup):
+        """Simulates mongodump succeeding: writes a small dummy file at the
+        --archive= path (so the real os.path.getsize() call afterwards has
+        something to measure) and returns rc=0, without ever touching a
+        real mongod."""
+        def fake_run(cmd, **kwargs):
+            archive_path = next(a.split("=", 1)[1] for a in cmd if a.startswith("--archive="))
+            with open(archive_path, "wb") as f:
+                f.write(b"fake mongodump archive")
+            return Mock(returncode=0, stderr="")
+        monkeypatch.setattr(backup.subprocess, "run", Mock(side_effect=fake_run))
+
+    def test_bk01_successful_backup_creates_archive_and_updates_metrics(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        backup = fresh_module("backup")
+        monkeypatch.setattr(backup, "BACKUP_DIR", str(tmp_path))
+        self._mock_mongodump_success(monkeypatch, backup)
+
+        backup.run_backup()
+
+        archives = list(tmp_path.glob("honeypot_*.archive.gz"))
+        assert len(archives) == 1
+        assert backup.metrics.BACKUP_LAST_ARCHIVE_BYTES._value.get() == len(b"fake mongodump archive")
+
+    def test_bk02_failed_mongodump_does_not_leave_a_partial_archive(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        backup = fresh_module("backup")
+        monkeypatch.setattr(backup, "BACKUP_DIR", str(tmp_path))
+
+        def fake_run_failure(cmd, **kwargs):
+            archive_path = next(a.split("=", 1)[1] for a in cmd if a.startswith("--archive="))
+            with open(archive_path, "wb") as f:
+                f.write(b"truncated")  # mongodump can leave a partial file before failing
+            return Mock(returncode=1, stderr="Failed: connection refused")
+        monkeypatch.setattr(backup.subprocess, "run", Mock(side_effect=fake_run_failure))
+
+        backup.run_backup()
+
+        assert list(tmp_path.glob("honeypot_*.archive.gz")) == []
+
+    def test_bk03_missing_mongodump_binary_does_not_crash(self, fresh_module, monkeypatch, tmp_path):
+        backup = fresh_module("backup")
+        monkeypatch.setattr(backup, "BACKUP_DIR", str(tmp_path))
+        monkeypatch.setattr(backup.subprocess, "run", Mock(side_effect=FileNotFoundError()))
+
+        backup.run_backup()  # must not raise
+
+        assert list(tmp_path.glob("honeypot_*.archive.gz")) == []
+
+    def test_bk04_retention_deletes_only_backups_older_than_the_window(
+        self, fresh_module, monkeypatch, tmp_path
+    ):
+        backup = fresh_module("backup")
+        monkeypatch.setattr(backup, "BACKUP_DIR", str(tmp_path))
+        monkeypatch.setattr(backup, "BACKUP_RETENTION_DAYS", 7)
+
+        old = tmp_path / "honeypot_20200101_000000.archive.gz"
+        recent = tmp_path / "honeypot_20260801_000000.archive.gz"
+        old.write_bytes(b"old")
+        recent.write_bytes(b"recent")
+        old_epoch = time.time() - 45 * 86400
+        os.utime(old, (old_epoch, old_epoch))
+
+        backup.cleanup_old_backups()
+
+        remaining = {p.name for p in tmp_path.iterdir()}
+        assert remaining == {"honeypot_20260801_000000.archive.gz"}
 
 
 # ---------------------------------------------------------------------------

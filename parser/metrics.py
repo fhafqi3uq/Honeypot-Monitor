@@ -91,6 +91,25 @@ CLEANUP_COWRIE_LOG_BYTES_DELETED_TOTAL = Counter(
     "Total bytes freed by deleting old rotated Cowrie log files",
 )
 
+# --- backup.py (also exposed on its own /metrics) ---------------------------
+BACKUP_RUNS = Counter(
+    "honeypot_backup_runs_total", "Number of times the mongodump backup job has run"
+)
+BACKUP_FAILURES = Counter(
+    "honeypot_backup_failures_total", "Number of backup runs where mongodump exited non-zero"
+)
+BACKUP_LAST_SUCCESS_TIMESTAMP = Gauge(
+    "honeypot_backup_last_success_timestamp_seconds",
+    "Unix timestamp of the last backup that completed successfully - a stalled/broken backup "
+    "job stops advancing this even if the process is still 'running'",
+)
+BACKUP_LAST_ARCHIVE_BYTES = Gauge(
+    "honeypot_backup_last_archive_bytes", "Size in bytes of the most recent backup archive"
+)
+BACKUP_DELETED_TOTAL = Counter(
+    "honeypot_backup_deleted_total", "Old backup archives deleted by the retention policy"
+)
+
 _current_mongo_stats_collector = None
 
 

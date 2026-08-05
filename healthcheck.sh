@@ -70,6 +70,10 @@ check_and_restart "Daily Report" \
     "pgrep -f 'daily_report.py'" \
     "cd ~/Honeypot-Monitor/notifier && source venv/bin/activate && nohup python3 daily_report.py > /tmp/daily.log 2>&1 &"
 
+check_and_restart "Auto Backup" \
+    "pgrep -f 'backup.py'" \
+    "cd ~/Honeypot-Monitor/parser && source venv/bin/activate && nohup python3 backup.py > /tmp/backup.log 2>&1 &"
+
 # Gửi Telegram nếu có service chết
 if [ $STATUS -eq 1 ]; then
     send_telegram "⚠️ <b>CẢNH BÁO HỆ THỐNG</b>
