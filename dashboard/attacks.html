@@ -6,12 +6,12 @@
   <title>Tấn công — Honeypot</title>
   <link rel="stylesheet" href="css/style.css"/>
   <style>
-    .pagination{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:16px;flex-wrap:wrap}
-    .page-btn{background:#2d3748;color:#e2e8f0;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;min-width:36px}
-    .page-btn:hover{background:#3d4758}
-    .page-btn.active{background:#3b82f6;color:white}
-    .page-btn:disabled{opacity:0.4;cursor:not-allowed}
-    .page-info{font-size:13px;color:#64748b}
+    .pagination{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:18px;flex-wrap:wrap}
+    .page-btn{background:var(--surface-2);color:var(--ink);border:1px solid var(--border);padding:7px 13px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;min-width:38px;transition:all .18s}
+    .page-btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+    .page-btn.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+    .page-btn:disabled{opacity:0.35;cursor:not-allowed}
+    .page-info{font-size:13px;color:var(--ink-muted)}
   </style>
 </head>
 <body style="visibility:hidden">
