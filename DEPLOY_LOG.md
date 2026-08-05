@@ -89,13 +89,21 @@ Default: deny (incoming), allow (outgoing)
   đúng ý muốn, không lộ public.
 - RAM ổn định ~49-54%, load < 0.2, swap 1GB gần như không dùng tới.
 
+## Đã xong — tự chạy lại sau reboot (Phần 7) — 2026-08-05
+
+- `crontab -e` (user `honeypotadmin`) có dòng:
+  ```
+  @reboot sleep 30 && bash /home/honeypotadmin/Honeypot-Monitor/start.sh >> /home/honeypotadmin/start_cron.log 2>&1
+  ```
+  `sleep 30` cho hệ thống ổn định trước khi khởi động cả stack (né lặp lại
+  kiểu dội tải như vướng mắc #4). `start.sh` đã tự bao gồm vòng lặp
+  `healthcheck.sh` ở cuối nên 1 dòng cron này lo được cả 2 việc (stack +
+  healthcheck) — không cần thêm entry cron riêng cho `healthcheck.sh`.
+  Dùng cron `@reboot` thay vì viết systemd unit riêng cho từng service, đơn
+  giản hơn nhiều cho quy mô dự án này.
+
 ## Chưa làm — bước tiếp theo
 
-- Đặt `healthcheck.sh` chạy qua cron thay vì chỉ chạy trong `start.sh` (Phần
-  7 `GO_LIVE.md`) — hiện chỉ sống khi shell `start.sh` còn chạy (nohup, nên
-  vẫn sống sau khi đóng SSH, nhưng không tự phục hồi nếu máy reboot).
-- **Cowrie/`start.sh` chưa có systemd unit** — không tự chạy lại sau reboot,
-  phải SSH vào chạy `bash start.sh` lại thủ công mỗi lần VPS khởi động lại.
 - **Quan trọng**: nâng cấp lên gói trả phí trước **07:00 08-08-2026**, không
   thì toàn bộ (kể cả code/data) bị xoá cùng máy trial.
 
