@@ -35,18 +35,20 @@ async function requireAuth() {
   }
 }
 
-// Drop-in replacement for `fetch(url, { credentials: 'include' })` used by
-// every page's data-loading calls. fetch() does NOT reject on an HTTP error
-// status (only on network failure), so a 401 from an access token that
-// expired/was invalidated mid-session would otherwise be parsed as if it
-// were real data (data.js's callers would see `{"detail": "..."}` where
-// they expected `{"total": ..., ...}`) and silently render wrong/blank
-// numbers instead of sending the admin back to the login page. Callers
-// keep their existing try/catch (the thrown error is caught there and
-// falls back to their normal empty-state default) - the redirect below is
-// what actually matters.
-async function authFetch(url) {
-  const res = await fetch(url, { credentials: 'include' })
+// Drop-in replacement for `fetch(url, { ...options, credentials: 'include' })`
+// used by every page's data-loading calls - `options` (method/headers/body)
+// is optional and passed straight through, only `credentials` is always
+// forced to 'include'. fetch() does NOT reject on an HTTP error status (only
+// on network failure), so a 401 from an access token that expired/was
+// invalidated mid-session would otherwise be parsed as if it were real data
+// (data.js's callers would see `{"detail": "..."}` where they expected
+// `{"total": ..., ...}`) and silently render wrong/blank numbers instead of
+// sending the admin back to the login page. Callers keep their existing
+// try/catch (the thrown error is caught there and falls back to their
+// normal empty-state default) - the redirect below is what actually
+// matters.
+async function authFetch(url, options = {}) {
+  const res = await fetch(url, { ...options, credentials: 'include' })
   if (res.status === 401) {
     goToLogin()
     throw new Error('unauthenticated')

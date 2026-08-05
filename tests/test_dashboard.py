@@ -330,3 +330,40 @@ class TestResponsive:
         page.click(".menu-toggle")
 
         assert "open" in (page.locator("#sidebar").get_attribute("class") or "")
+
+
+# ---------------------------------------------------------------------------
+# authFetch() with a POST + custom headers (settings.html's 2FA setup call) -
+# authFetch(url) used to silently drop a 2nd `options` argument, turning the
+# intended POST /auth/2fa/setup into a plain GET, which the backend rejects
+# with 405 - caught live in production (2026-08-05: "Bật 2FA" always failed
+# with a generic error, masking the real cause). Fixed by forwarding
+# `options` through to the underlying fetch() call.
+# ---------------------------------------------------------------------------
+class TestAuthFetchForwardsOptions:
+    def test_2fa_setup_button_issues_a_real_post_not_a_silent_get(self, page, live_stack_clean):
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        _login_via_ui(page, dashboard_url, username, password)
+
+        page.goto(f"{dashboard_url}/settings.html")
+
+        setup_requests = []
+        page.on(
+            "request",
+            lambda req: setup_requests.append(req.method)
+            if "/auth/2fa/setup" in req.url else None,
+        )
+
+        dialogs = []
+        page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+
+        page.click("#btn-start-setup")
+        expect(page.locator("#totp-setup-panel")).to_be_visible(timeout=5000)
+
+        assert dialogs == [], f"2FA setup failed with an alert: {dialogs}"
+        assert setup_requests == ["POST"], (
+            f"expected exactly one POST to /auth/2fa/setup, got {setup_requests} - "
+            "authFetch() must forward the {method, headers} options it's given"
+        )
+        assert page.locator("#totp-secret").inner_text().strip() != ""
