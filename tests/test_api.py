@@ -426,6 +426,50 @@ class TestMetricsEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# /api/stats/mitre, /api/stats/heatmap
+# ---------------------------------------------------------------------------
+class TestMitreAndHeatmapStats:
+    def test_mt01_mitre_stats_groups_and_names_techniques(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many([
+            {"mitre_techniques": ["T1110", "T1078"]},
+            {"mitre_techniques": ["T1110"]},
+            {"mitre_techniques": []},
+            {"mitre_techniques": ["T9999"]},  # unknown ID - falls back to itself as name
+        ])
+
+        r = client.get("/api/stats/mitre")
+
+        assert r.status_code == 200
+        data = {d["technique"]: d for d in r.json()["data"]}
+        assert data["T1110"]["count"] == 2
+        assert data["T1110"]["name"] == "Brute Force"
+        assert data["T1078"]["count"] == 1
+        assert data["T9999"]["name"] == "T9999"
+
+    def test_ht01_heatmap_returns_168_buckets_with_correct_counts(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        # 2026-08-05 is a Wednesday (weekday()==2), 14:xx UTC
+        main.collection.insert_many([
+            {"timestamp": "2026-08-05T14:10:00Z"},
+            {"timestamp": "2026-08-05T14:45:00Z"},
+            {"timestamp": "2026-08-05T09:00:00Z"},
+            {"timestamp": None},          # ignored, not counted, doesn't crash
+            {"timestamp": "not-a-date"},  # ignored, not counted, doesn't crash
+        ])
+
+        r = client.get("/api/stats/heatmap")
+
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 7 * 24
+        by_key = {(d["day"], d["hour"]): d["count"] for d in data}
+        assert by_key[(2, 14)] == 2
+        assert by_key[(2, 9)] == 1
+        assert sum(by_key.values()) == 3
+
+
+# ---------------------------------------------------------------------------
 # /api/sessions/human-likely: heuristic bot-vs-human classification based on
 # inter-command timing and a known scripted-bot command-prefix match.
 # ---------------------------------------------------------------------------
@@ -525,7 +569,7 @@ VIEWER_ALLOWED_ENDPOINTS = [
     "/api/stats", "/api/attacks", "/api/top-ips", "/api/top-passwords",
     "/api/top-usernames", "/api/map-data", "/api/stats/hourly",
     "/api/stats/countries", "/api/brute-force", "/api/search?ip=1.2.3.4",
-    "/api/sessions/human-likely",
+    "/api/sessions/human-likely", "/api/stats/mitre", "/api/stats/heatmap",
 ]
 
 

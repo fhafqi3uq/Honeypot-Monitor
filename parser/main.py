@@ -16,6 +16,7 @@ import io, csv
 import auth
 import metrics
 from log_setup import get_logger
+from mitre_mapping import TECHNIQUES as MITRE_TECHNIQUE_NAMES
 
 logger = get_logger(__name__)
 
@@ -356,6 +357,49 @@ def get_top_countries(limit: int = 10, user: str = Depends(auth.get_current_user
         {"$project": {"country": "$_id", "count": 1, "_id": 0}}
     ]
     return {"data": list(collection.aggregate(pipeline))}
+
+@api_router.get("/stats/mitre")
+def get_mitre_stats(limit: int = 15, user: str = Depends(auth.get_current_user)):
+    pipeline = [
+        {"$unwind": "$mitre_techniques"},
+        {"$group": {"_id": "$mitre_techniques", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": limit},
+    ]
+    data = [
+        {
+            "technique": r["_id"],
+            "name": MITRE_TECHNIQUE_NAMES.get(r["_id"], r["_id"]),
+            "count": r["count"],
+        }
+        for r in collection.aggregate(pipeline)
+    ]
+    return {"data": data}
+
+@api_router.get("/stats/heatmap")
+def get_attack_heatmap(user: str = Depends(auth.get_current_user)):
+    """Attack volume by day-of-week x hour-of-day (UTC) - lets a real
+    repeat pattern ("mostly weekday mornings") emerge once enough data
+    accumulates. Computed in Python over collection.find() rather than via
+    MongoDB's $dateFromString/$dayOfWeek aggregation operators, which
+    mongomock (what the whole test suite runs against - see CLAUDE.md's
+    safety notes) doesn't implement."""
+    counts = [[0] * 24 for _ in range(7)]  # counts[weekday][hour], Monday=0..Sunday=6
+    for doc in collection.find({}, {"timestamp": 1}):
+        ts = doc.get("timestamp")
+        if not ts:
+            continue
+        try:
+            dt = _parse_iso_timestamp(ts)
+        except (ValueError, TypeError):
+            continue
+        counts[dt.weekday()][dt.hour] += 1
+
+    data = [
+        {"day": day, "hour": hour, "count": counts[day][hour]}
+        for day in range(7) for hour in range(24)
+    ]
+    return {"data": data}
 
 @api_router.get("/brute-force")
 def get_brute_force(limit: int = 10, user: str = Depends(auth.get_current_user)):

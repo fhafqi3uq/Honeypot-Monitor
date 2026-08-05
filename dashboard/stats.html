@@ -73,6 +73,22 @@
       </div>
     </div>
 
+    <!-- Biểu đồ kỹ thuật MITRE ATT&CK -->
+    <div class="card">
+      <h3>🎯 Top kỹ thuật MITRE ATT&CK</h3>
+      <div class="chart-container" style="height:340px">
+        <canvas id="mitreChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Heatmap giờ tấn công -->
+    <div class="card">
+      <h3>🔥 Heatmap giờ tấn công (theo thứ trong tuần, giờ UTC)</h3>
+      <div class="table-wrapper">
+        <div id="heatmap" style="display:inline-block;min-width:100%"></div>
+      </div>
+    </div>
+
     <div class="two-col">
       <div class="card">
         <h3>🏆 Top 10 IP tấn công</h3>
@@ -133,7 +149,7 @@
     let countryChart = null
 
     async function loadStats() {
-      const [stats, hours, types, topIPs, topPass, topUsers, countries, humanSessions] = await Promise.all([
+      const [stats, hours, types, topIPs, topPass, topUsers, countries, humanSessions, mitreStats, heatmap] = await Promise.all([
         fetchStats(),
         fetchHours(),
         fetchTypes(),
@@ -141,7 +157,9 @@
         fetchTopPasswords(),
         authFetch(`${API_URL}/api/top-usernames?limit=10`).then(r=>r.json()).catch(()=>({data:[]})),
         authFetch(`${API_URL}/api/stats/countries`).then(r=>r.json()).catch(()=>({data:[]})),
-        authFetch(`${API_URL}/api/sessions/human-likely?limit=20`).then(r=>r.json()).catch(()=>({data:[]}))
+        authFetch(`${API_URL}/api/sessions/human-likely?limit=20`).then(r=>r.json()).catch(()=>({data:[]})),
+        authFetch(`${API_URL}/api/stats/mitre?limit=15`).then(r=>r.json()).catch(()=>({data:[]})),
+        authFetch(`${API_URL}/api/stats/heatmap`).then(r=>r.json()).catch(()=>({data:[]}))
       ])
 
       document.getElementById('s-total').textContent   = stats.total || 0
@@ -152,6 +170,8 @@
       initBarChart(hours)
       initPieChart(types)
       initCountryChart(countries.data || [])
+      initMitreChart(mitreStats.data || [])
+      renderHeatmap(heatmap.data || [])
 
       document.getElementById('top-ips').innerHTML = topIPs
         .filter(d => d.ip !== '127.0.0.1')
@@ -238,6 +258,70 @@
           }
         }
       })
+    }
+
+    let mitreChart = null
+
+    function initMitreChart(data) {
+      const ctx = document.getElementById('mitreChart').getContext('2d')
+      if (mitreChart) mitreChart.destroy()
+
+      const palette = ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767']
+
+      mitreChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.map(d => `${d.technique} — ${d.name}`),
+          datasets: [{
+            label: 'Số lần',
+            data: data.map(d => d.count),
+            backgroundColor: data.map((_, i) => palette[i % palette.length]),
+            borderRadius: 6,
+            maxBarThickness: 22,
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { backgroundColor:'#171a26', borderColor:'rgba(255,255,255,.1)', borderWidth:1, padding:10, titleColor:'#eef1f8', bodyColor:'#9aa4bd' }
+          },
+          scales: {
+            x: { ticks: { color: '#6b7590' }, grid: { color: 'rgba(255,255,255,.06)' } },
+            y: { ticks: { color: '#9aa4bd', font: { size: 11 } }, grid: { display:false } }
+          }
+        }
+      })
+    }
+
+    function renderHeatmap(data) {
+      const el = document.getElementById('heatmap')
+      const dayLabels = ['T2','T3','T4','T5','T6','T7','CN']
+      const maxCount = Math.max(1, ...data.map(d => d.count))
+
+      const cellStyle = (count) => {
+        if (count === 0) return 'background:rgba(255,255,255,.03)'
+        const intensity = 0.15 + 0.85 * (count / maxCount)
+        return `background:rgba(57,135,229,${intensity.toFixed(2)})`
+      }
+
+      let html = '<div style="display:grid;grid-template-columns:36px repeat(24,minmax(22px,1fr));gap:3px;font-size:10px;min-width:700px">'
+      html += '<div></div>'
+      for (let h = 0; h < 24; h++) {
+        html += `<div style="text-align:center;color:var(--ink-muted)">${h}</div>`
+      }
+      for (let day = 0; day < 7; day++) {
+        html += `<div style="color:var(--ink-secondary);display:flex;align-items:center">${dayLabels[day]}</div>`
+        for (let h = 0; h < 24; h++) {
+          const cell = data.find(d => d.day === day && d.hour === h)
+          const count = cell ? cell.count : 0
+          html += `<div title="${dayLabels[day]} ${h}:00 — ${count} lượt" style="aspect-ratio:1;border-radius:3px;${cellStyle(count)}"></div>`
+        }
+      }
+      html += '</div>'
+      el.innerHTML = html
     }
 
     function toggleSidebar() {
