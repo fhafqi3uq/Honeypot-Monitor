@@ -35,11 +35,16 @@ fi
 echo "==> Allow cổng SSH thật: $ADMIN_SSH_PORT/tcp"
 ufw allow "${ADMIN_SSH_PORT}/tcp" comment 'admin ssh (real)'
 
-echo "==> Allow cổng Cowrie SSH nội bộ (đích sau NAT redirect từ 22): $COWRIE_SSH_INTERNAL_PORT/tcp"
-ufw allow "${COWRIE_SSH_INTERNAL_PORT}/tcp" comment 'cowrie honeypot ssh (internal, NAT target)'
+echo "==> Rate-limit cổng Cowrie SSH nội bộ (đích sau NAT redirect từ 22): $COWRIE_SSH_INTERNAL_PORT/tcp"
+# 'ufw limit' (không phải 'allow') - dùng module `recent` có sẵn của ufw,
+# tự động chặn tạm 1 IP nếu nó kết nối mới >= 6 lần trong 30 giây. Gặp thật
+# 1 bot lặp connect/login/disconnect >2000 lần/vài phút - "allow" thường
+# không có gì cản, "limit" chặn bớt mà không cần cài thêm gói/tự viết rule
+# iptables riêng (tránh lặp lại xung đột persistence với ufw như trước).
+ufw limit "${COWRIE_SSH_INTERNAL_PORT}/tcp" comment 'cowrie honeypot ssh (internal, NAT target, rate-limited)'
 
-echo "==> Allow cổng Cowrie Telnet nội bộ (đích sau NAT redirect từ 23): $COWRIE_TELNET_INTERNAL_PORT/tcp"
-ufw allow "${COWRIE_TELNET_INTERNAL_PORT}/tcp" comment 'cowrie honeypot telnet (internal, NAT target)'
+echo "==> Rate-limit cổng Cowrie Telnet nội bộ (đích sau NAT redirect từ 23): $COWRIE_TELNET_INTERNAL_PORT/tcp"
+ufw limit "${COWRIE_TELNET_INTERNAL_PORT}/tcp" comment 'cowrie honeypot telnet (internal, NAT target, rate-limited)'
 
 echo "==> Default deny incoming, allow outgoing"
 ufw default deny incoming
@@ -53,10 +58,14 @@ ufw status verbose
 cat <<EOF
 
 Đã bật ufw với:
-  - $ADMIN_SSH_PORT/tcp mở (SSH thật)
-  - $COWRIE_SSH_INTERNAL_PORT/tcp mở (Cowrie SSH - đích sau NAT từ cổng 22 public)
-  - $COWRIE_TELNET_INTERNAL_PORT/tcp mở (Cowrie Telnet - đích sau NAT từ cổng 23 public)
+  - $ADMIN_SSH_PORT/tcp mở (SSH thật, không giới hạn)
+  - $COWRIE_SSH_INTERNAL_PORT/tcp mở, rate-limited (Cowrie SSH - đích sau NAT từ cổng 22 public)
+  - $COWRIE_TELNET_INTERNAL_PORT/tcp mở, rate-limited (Cowrie Telnet - đích sau NAT từ cổng 23 public)
   - Mọi cổng khác bị chặn từ bên ngoài
+
+Rate-limit (ufw limit) = 1 IP kết nối mới >= 6 lần trong 30 giây sẽ bị REJECT
+tạm thời cho tới khi giảm tần suất. Đủ để chặn bot spam hàng nghìn lượt/vài
+phút mà vẫn giữ được kha khá mẫu traffic từ mỗi IP trước khi bị chặn.
 
 Chạy script này TRƯỚC deploy/expose_cowrie_port22.sh + expose_cowrie_port23.sh
 hoặc sau đều được - thứ tự không quan trọng, chỉ cần cả 2 cùng có mặt để

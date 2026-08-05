@@ -108,8 +108,11 @@ sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_INTERNAL_PORT=22
 
 Script bắt buộc bạn truyền `ADMIN_SSH_PORT` tường minh (không có default) để
 tránh trường hợp quên đổi cổng SSH thật rồi tự khoá mình ngoài. Xem chi tiết
-trong script — nó allow 3 cổng đó trước (SSH admin, Cowrie SSH nội bộ,
-Cowrie Telnet nội bộ), deny-by-default sau, rồi mới bật ufw.
+trong script — nó mở SSH admin bằng `ufw allow` (không giới hạn), 2 cổng
+Cowrie nội bộ bằng `ufw limit` (rate-limit: 1 IP kết nối mới ≥ 6 lần/30s bị
+REJECT tạm - chặn bot spam hàng nghìn lượt/vài phút mà không cần cài thêm
+gì, dùng module `recent` có sẵn của ufw), deny-by-default sau, rồi mới bật
+ufw.
 
 **Lưu ý quan trọng — allow đúng cổng NỘI BỘ (2222/2223), không phải cổng
 public (22/23)**: NAT REDIRECT ở bước 4 đổi đích gói tin trước khi nó tới
