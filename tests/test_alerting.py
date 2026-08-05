@@ -237,10 +237,12 @@ class TestRealtimeAlertRouting:
             mock.assert_not_called()
         assert realtime_alert.collection.count_documents({}) == 0
 
-    def test_al05_duplicate_events_are_not_deduplicated(self, fresh_module, monkeypatch):
-        """Pins down CURRENT behaviour: there is no cooldown/dedup - the
-        exact same failed-login line processed twice fires two separate
-        Telegram alerts and creates two documents."""
+    def test_al05_duplicate_events_still_both_stored_but_only_one_alerted(
+        self, fresh_module, monkeypatch
+    ):
+        """Mongo storage is never deduplicated - every event gets its own
+        document regardless of the alert cooldown below. Telegram IS now
+        rate-limited per source IP (ALERT_COOLDOWN_SECONDS) - see AL-13."""
         realtime_alert = fresh_module("realtime_alert")
         mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
 
@@ -248,8 +250,53 @@ class TestRealtimeAlertRouting:
         realtime_alert.process_event(raw)
         realtime_alert.process_event(raw)
 
-        assert mocks["alert_login_failed"].call_count == 2
+        assert mocks["alert_login_failed"].call_count == 1
         assert realtime_alert.collection.count_documents({}) == 2
+
+    # -----------------------------------------------------------------------
+    # AL-13: per-IP Telegram alert cooldown (added after a real IoT-botnet
+    # login loop - connect/login/run-commands/disconnect every few seconds -
+    # flooded Telegram with a fresh push every cycle)
+    # -----------------------------------------------------------------------
+    def test_al13_second_alert_from_same_ip_within_cooldown_is_suppressed(
+        self, fresh_module, monkeypatch
+    ):
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        realtime_alert.process_event(
+            make_login_failed_event(src_ip="203.0.113.7", username="root", password="a")
+        )
+        realtime_alert.process_event(
+            make_login_success_event(src_ip="203.0.113.7", username="root", password="b")
+        )
+
+        mocks["alert_login_failed"].assert_called_once()
+        mocks["alert_login_success"].assert_not_called()
+
+    def test_al13b_different_ips_have_independent_cooldowns(self, fresh_module, monkeypatch):
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        realtime_alert.process_event(make_login_failed_event(src_ip="203.0.113.7"))
+        realtime_alert.process_event(make_login_failed_event(src_ip="198.51.100.9"))
+
+        assert mocks["alert_login_failed"].call_count == 2
+
+    def test_al13c_alert_allowed_again_once_cooldown_window_passes(
+        self, fresh_module, monkeypatch
+    ):
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        fake_now = [1_000_000.0]
+        monkeypatch.setattr(realtime_alert.time, "time", lambda: fake_now[0])
+
+        realtime_alert.process_event(make_login_failed_event(src_ip="203.0.113.7"))
+        fake_now[0] += realtime_alert.ALERT_COOLDOWN_SECONDS + 1
+        realtime_alert.process_event(make_login_failed_event(src_ip="203.0.113.7"))
+
+        assert mocks["alert_login_failed"].call_count == 2
 
 
 # ---------------------------------------------------------------------------

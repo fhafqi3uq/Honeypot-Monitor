@@ -13,6 +13,27 @@ logger = get_logger(__name__)
 
 METRICS_PORT = 9101
 
+# Rate-limit Telegram alerts per source IP - a bot that loops (connect,
+# login, run commands, disconnect, repeat every few seconds - real IoT
+# botnet behavior, not a bug) would otherwise fire a fresh Telegram push
+# every single cycle. Shared across login_failed/login_success/
+# session_commands: whichever fires first for an IP "uses up" the window,
+# so a real attacker's later success right after a failed attempt can be
+# suppressed too - an acceptable trade-off for "at most 1 push per IP per
+# window" rather than tracking a separate cooldown per alert type. Mongo
+# storage is never affected - every event is still stored regardless.
+ALERT_COOLDOWN_SECONDS = 5 * 60
+_LAST_ALERT_TIME: dict[str, float] = {}
+
+
+def _should_alert(ip: str) -> bool:
+    now = time.time()
+    last = _LAST_ALERT_TIME.get(ip)
+    if last is not None and now - last < ALERT_COOLDOWN_SECONDS:
+        return False
+    _LAST_ALERT_TIME[ip] = now
+    return True
+
 
 def _read_secret(env_name: str):
     """Reads a secret from <env_name>_FILE (a file path) if set - the
@@ -177,18 +198,20 @@ def process_event(raw: dict):
     password = raw.get("password", "?")
 
     if eventid == "cowrie.login.failed":
-        alert_login_failed(ip, username, password, 1)
-        logger.info("Sent brute-force Telegram alert", extra={"ip": ip, "event": eventid})
-        notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
+        if _should_alert(ip):
+            alert_login_failed(ip, username, password, 1)
+            logger.info("Sent brute-force Telegram alert", extra={"ip": ip, "event": eventid})
+            notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.login.success":
-        alert_login_success(ip, username, password)
-        logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
-        notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
+        if _should_alert(ip):
+            alert_login_success(ip, username, password)
+            logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
+            notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.session.closed":
         commands = cached.get("commands", [])
-        if commands:
+        if commands and _should_alert(ip):
             alert_session_commands(ip, commands)
             logger.info(
                 "Sent session-commands Telegram alert",
