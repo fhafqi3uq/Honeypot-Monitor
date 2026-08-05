@@ -35,6 +35,8 @@ cd cowrie-src
 python3 -m venv cowrie-env
 source cowrie-env/bin/activate
 pip install -r requirements.txt
+pip install -e .   # đăng ký lệnh `cowrie` (project.scripts trong pyproject.toml) -
+                    # requirements.txt chỉ pin dependency, không tự cài chính package
 cp ../cowrie.cfg etc/cowrie.cfg
 cowrie-env/bin/cowrie start
 ```
