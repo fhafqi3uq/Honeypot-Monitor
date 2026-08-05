@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -373,6 +374,77 @@ def get_brute_force(limit: int = 10, user: str = Depends(auth.get_current_user))
         }}
     ]
     return {"data": list(collection.aggregate(pipeline))}
+
+# Command sequence sent verbatim, in order, by a known scripted IoT-botnet
+# loader (Mirai-family shell/device fingerprinting probe, seen live on this
+# honeypot) - matched as a whole prefix so a human who happens to type e.g.
+# just `system` on its own doesn't get flagged, only the exact scripted
+# combination. Add more fixed prefixes here as new bot families show up.
+KNOWN_BOT_COMMAND_PREFIXES = [
+    ["sh", "shell", "enable", "system", "ping; sh"],
+]
+
+# A scripted loader sends its whole command list back-to-back, usually well
+# under a second apart. A human reads output and decides what to try next,
+# so the pause is normally several seconds+. This is a heuristic, not a
+# certainty - a laggy/rate-limited bot or a very fast typist can land on
+# either side of it.
+HUMAN_AVG_GAP_SECONDS = 3.0
+
+def _parse_iso_timestamp(ts: str):
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+@api_router.get("/sessions/human-likely")
+def get_human_likely_sessions(limit: int = 20, user: str = Depends(auth.get_current_user)):
+    """Surfaces sessions that look like a real person typing rather than a
+    scripted bot, based on inter-command timing and whether the command
+    sequence matches a known fixed bot script - see the constants above.
+    Existing Mongo documents/collection are untouched; this is a read-only
+    derived view computed at request time, not stored anywhere."""
+    pipeline = [
+        {"$match": {"event": "cowrie.command.input", "command": {"$ne": None}}},
+        {"$sort": {"timestamp": 1}},
+        {"$group": {
+            "_id": "$session",
+            "commands":   {"$push": "$command"},
+            "timestamps": {"$push": "$timestamp"},
+            "src_ip":     {"$first": "$src_ip"},
+            "country":    {"$first": "$country"},
+        }},
+        {"$match": {"$expr": {"$gte": [{"$size": "$commands"}, 2]}}},
+    ]
+
+    results = []
+    for s in collection.aggregate(pipeline):
+        commands, timestamps = s["commands"], s["timestamps"]
+        gaps = []
+        for prev_ts, ts in zip(timestamps, timestamps[1:]):
+            try:
+                gaps.append((_parse_iso_timestamp(ts) - _parse_iso_timestamp(prev_ts)).total_seconds())
+            except (ValueError, TypeError):
+                continue
+        if not gaps:
+            continue
+
+        avg_gap = sum(gaps) / len(gaps)
+        is_known_bot = any(
+            commands[:len(prefix)] == prefix for prefix in KNOWN_BOT_COMMAND_PREFIXES
+        )
+        likely_human = avg_gap >= HUMAN_AVG_GAP_SECONDS and not is_known_bot
+
+        results.append({
+            "session":         s["_id"],
+            "src_ip":          s["src_ip"],
+            "country":         s["country"],
+            "first_seen":      timestamps[0],
+            "command_count":   len(commands),
+            "avg_gap_seconds": round(avg_gap, 2),
+            "likely_human":    likely_human,
+            "commands":        commands,
+        })
+
+    results.sort(key=lambda r: (not r["likely_human"], -r["avg_gap_seconds"]))
+    return {"data": results[:limit]}
 
 @api_router.get("/search")
 def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):

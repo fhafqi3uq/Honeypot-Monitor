@@ -104,6 +104,24 @@
         </table>
       </div>
     </div>
+
+    <!-- Phiên nghi ngờ là người thật -->
+    <div class="card">
+      <h3>🕵️ Phiên nghi ngờ là người thật</h3>
+      <p style="font-size:12.5px;color:var(--ink-muted);margin:-10px 0 14px">
+        Ước lượng dựa trên khoảng cách giữa các lệnh (bot chạy script cố định, gõ gần như tức thì;
+        người thật thường dừng vài giây suy nghĩ) và có khớp mẫu lệnh bot đã biết hay không -
+        chỉ là gợi ý tương đối, không chắc chắn 100%.
+      </p>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr><th>Thời điểm</th><th>IP</th><th>Quốc gia</th><th>Số lệnh</th><th>TB giữa 2 lệnh</th><th>Đánh giá</th><th>Lệnh</th></tr>
+          </thead>
+          <tbody id="human-sessions"><tr><td colspan="7" class="loading">Đang tải...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="js/escape.js"></script>
@@ -115,14 +133,15 @@
     let countryChart = null
 
     async function loadStats() {
-      const [stats, hours, types, topIPs, topPass, topUsers, countries] = await Promise.all([
+      const [stats, hours, types, topIPs, topPass, topUsers, countries, humanSessions] = await Promise.all([
         fetchStats(),
         fetchHours(),
         fetchTypes(),
         fetchTopIPs(),
         fetchTopPasswords(),
         authFetch(`${API_URL}/api/top-usernames?limit=10`).then(r=>r.json()).catch(()=>({data:[]})),
-        authFetch(`${API_URL}/api/stats/countries`).then(r=>r.json()).catch(()=>({data:[]}))
+        authFetch(`${API_URL}/api/stats/countries`).then(r=>r.json()).catch(()=>({data:[]})),
+        authFetch(`${API_URL}/api/sessions/human-likely?limit=20`).then(r=>r.json()).catch(()=>({data:[]}))
       ])
 
       document.getElementById('s-total').textContent   = stats.total || 0
@@ -161,6 +180,25 @@
             <td><span class="badge failed">${escapeHtml(d.count)} lần</span></td>
           </tr>`
         ).join('') || '<tr><td colspan="3" class="loading">Chưa có dữ liệu</td></tr>'
+
+      document.getElementById('human-sessions').innerHTML = (humanSessions.data || [])
+        .map(s => {
+          const time = s.first_seen ? s.first_seen.substring(0,19).replace('T',' ') : '--'
+          const badge = s.likely_human
+            ? '<span class="badge success">🧑 Có thể là người</span>'
+            : '<span class="badge failed">🤖 Có thể là bot</span>'
+          const cmdPreview = escapeHtml((s.commands || []).join(' → '))
+          return `
+            <tr>
+              <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${escapeHtml(time)}</td>
+              <td class="ip-text">${escapeHtml(s.src_ip)}</td>
+              <td style="font-size:13px">${escapeHtml(s.country)||'—'}</td>
+              <td>${s.command_count}</td>
+              <td>${s.avg_gap_seconds}s</td>
+              <td>${badge}</td>
+              <td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:12px" title="${cmdPreview}">${cmdPreview}</td>
+            </tr>`
+        }).join('') || '<tr><td colspan="7" class="loading">Chưa có session nào chạy ≥2 lệnh</td></tr>'
 
       document.getElementById('last-updated').textContent =
         'Cập nhật lúc: ' + new Date().toLocaleTimeString('vi-VN')

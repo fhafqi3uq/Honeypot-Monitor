@@ -426,6 +426,85 @@ class TestMetricsEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# /api/sessions/human-likely: heuristic bot-vs-human classification based on
+# inter-command timing and a known scripted-bot command-prefix match.
+# ---------------------------------------------------------------------------
+def _command_docs(session, src_ip, commands, timestamps, country="Vietnam"):
+    return [
+        {
+            "session": session, "src_ip": src_ip, "country": country,
+            "event": "cowrie.command.input", "command": cmd, "timestamp": ts,
+        }
+        for cmd, ts in zip(commands, timestamps)
+    ]
+
+
+class TestHumanLikelySessions:
+    def test_hl01_fast_repeated_bot_prefix_is_flagged_as_bot(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many(_command_docs(
+            "sessA", "203.0.113.7",
+            ["sh", "shell", "enable", "system", "ping; sh"],
+            ["2026-01-01T00:00:00.000000Z", "2026-01-01T00:00:00.200000Z",
+             "2026-01-01T00:00:00.400000Z", "2026-01-01T00:00:00.600000Z",
+             "2026-01-01T00:00:00.800000Z"],
+        ))
+
+        r = client.get("/api/sessions/human-likely")
+
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["likely_human"] is False
+        assert data[0]["command_count"] == 5
+
+    def test_hl02_slow_distinct_commands_are_flagged_as_likely_human(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many(_command_docs(
+            "sessB", "198.51.100.9",
+            ["ls -la", "cat /etc/passwd", "whoami"],
+            ["2026-01-01T00:00:00Z", "2026-01-01T00:00:08Z", "2026-01-01T00:00:20Z"],
+        ))
+
+        r = client.get("/api/sessions/human-likely")
+
+        data = r.json()["data"]
+        assert len(data) == 1
+        assert data[0]["likely_human"] is True
+        assert data[0]["avg_gap_seconds"] > 3.0
+
+    def test_hl03_sessions_with_fewer_than_2_commands_are_excluded(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many(_command_docs(
+            "sessC", "203.0.113.7", ["whoami"], ["2026-01-01T00:00:00Z"],
+        ))
+
+        r = client.get("/api/sessions/human-likely")
+
+        assert r.json()["data"] == []
+
+    def test_hl04_likely_human_sessions_sort_first(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many(_command_docs(
+            "bot1", "203.0.113.7",
+            ["sh", "shell", "enable", "system", "ping; sh"],
+            ["2026-01-01T00:00:00.0Z", "2026-01-01T00:00:00.1Z",
+             "2026-01-01T00:00:00.2Z", "2026-01-01T00:00:00.3Z",
+             "2026-01-01T00:00:00.4Z"],
+        ))
+        main.collection.insert_many(_command_docs(
+            "human1", "198.51.100.9",
+            ["ls", "cat notes.txt"],
+            ["2026-01-01T00:00:00Z", "2026-01-01T00:00:10Z"],
+        ))
+
+        data = client.get("/api/sessions/human-likely").json()["data"]
+
+        assert data[0]["session"] == "human1"
+        assert data[0]["likely_human"] is True
+
+
+# ---------------------------------------------------------------------------
 # RBAC: "viewer" role must be blocked from endpoints that export data or
 # have a write side-effect; "admin" keeps full access; accounts predating
 # the role field default to admin (backward compatibility).
@@ -446,6 +525,7 @@ VIEWER_ALLOWED_ENDPOINTS = [
     "/api/stats", "/api/attacks", "/api/top-ips", "/api/top-passwords",
     "/api/top-usernames", "/api/map-data", "/api/stats/hourly",
     "/api/stats/countries", "/api/brute-force", "/api/search?ip=1.2.3.4",
+    "/api/sessions/human-likely",
 ]
 
 
