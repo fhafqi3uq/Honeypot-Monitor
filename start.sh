@@ -61,6 +61,14 @@ source venv/bin/activate
 pkill -f backup.py 2>/dev/null; nohup python3 -u backup.py > /tmp/backup.log 2>&1 &
 echo "✅ Auto backup MongoDB started (dump lúc 02:00 mỗi ngày)"
 
+# HTTP honeypot (trang admin login giả, nghe nội bộ 8899, NAT từ cổng 80 -
+# xem deploy/expose_webtrap_port80.sh - KHÔNG tự chạy NAT ở đây, chỉ cần
+# làm 1 lần)
+cd "$PROJECT_DIR/parser"
+source venv/bin/activate
+pkill -f http_honeypot.py 2>/dev/null; nohup python3 -u http_honeypot.py > /tmp/http_honeypot.log 2>&1 &
+echo "✅ HTTP honeypot started (nội bộ :8899)"
+
 # Healthcheck mỗi 30 giây
 pkill -f "while true.*healthcheck" 2>/dev/null
 nohup bash -c 'while true; do bash $PROJECT_DIR/healthcheck.sh >> /tmp/healthcheck.log 2>&1; sleep 30; done' > /dev/null 2>&1 &

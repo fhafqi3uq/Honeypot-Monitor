@@ -154,6 +154,10 @@
             'cowrie.command.input':   { status: 'failed',  label: '⌨ Command' },
             'cowrie.session.connect': { status: 'failed',  label: '→ Connect' },
             'cowrie.session.closed':  { status: 'failed',  label: '■ Closed' },
+            // parser/http_honeypot.py - luôn từ chối mọi lượt login nên gắn
+            // nhãn 'failed' giống cowrie.login.failed, không dùng 'success'
+            'http.login.attempt':     { status: 'failed',  label: '🌐 HTTP Login' },
+            'http.request':           { status: 'failed',  label: '🌐 HTTP Request' },
           }
           const { status, label } = EVENT_LABELS[a.event] || { status: 'failed', label: a.event }
           const time      = a.timestamp ? a.timestamp.substring(0,19).replace('T',' ') : '--'

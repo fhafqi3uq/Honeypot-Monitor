@@ -78,6 +78,10 @@ check_and_restart "Weekly Report" \
     "pgrep -f 'weekly_report.py'" \
     "cd ~/Honeypot-Monitor/notifier && source venv/bin/activate && nohup python3 weekly_report.py > /tmp/weekly.log 2>&1 &"
 
+check_and_restart "HTTP Honeypot" \
+    "curl -s http://localhost:8899/robots.txt" \
+    "cd ~/Honeypot-Monitor/parser && source venv/bin/activate && nohup python3 http_honeypot.py > /tmp/http_honeypot.log 2>&1 &"
+
 # Gửi Telegram nếu có service chết
 if [ $STATUS -eq 1 ]; then
     send_telegram "⚠️ <b>CẢNH BÁO HỆ THỐNG</b>

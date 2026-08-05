@@ -14,18 +14,21 @@
 # vì lúc đó ufw bị hỏng (default policy ACCEPT thay vì DROP) nên không
 # thực sự chặn gì - vá xong bug ufw thì bug allow-sai-cổng này mới lộ ra.
 #
-# Dùng: sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_INTERNAL_PORT=2222] [COWRIE_TELNET_INTERNAL_PORT=2223]
+# Dùng: sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_INTERNAL_PORT=2222] [COWRIE_TELNET_INTERNAL_PORT=2223] [HTTP_HONEYPOT_INTERNAL_PORT=8899]
 set -euo pipefail
 
 ADMIN_SSH_PORT="${1:?Thiếu ADMIN_SSH_PORT - xem GO_LIVE.md phần 2 (cổng SSH thật, PHẢI khác 22)}"
 COWRIE_SSH_INTERNAL_PORT="${2:-2222}"
 COWRIE_TELNET_INTERNAL_PORT="${3:-2223}"
+HTTP_HONEYPOT_INTERNAL_PORT="${4:-8899}"
 
-if [ "$ADMIN_SSH_PORT" = "$COWRIE_SSH_INTERNAL_PORT" ] || [ "$ADMIN_SSH_PORT" = "$COWRIE_TELNET_INTERNAL_PORT" ]; then
-    echo "LỖI: ADMIN_SSH_PORT không được trùng cổng nội bộ Cowrie ($COWRIE_SSH_INTERNAL_PORT/$COWRIE_TELNET_INTERNAL_PORT)." >&2
-    echo "SSH thật và Cowrie phải là các cổng khác nhau." >&2
-    exit 1
-fi
+for p in "$COWRIE_SSH_INTERNAL_PORT" "$COWRIE_TELNET_INTERNAL_PORT" "$HTTP_HONEYPOT_INTERNAL_PORT"; do
+    if [ "$ADMIN_SSH_PORT" = "$p" ]; then
+        echo "LỖI: ADMIN_SSH_PORT không được trùng cổng nội bộ honeypot ($p)." >&2
+        echo "SSH thật và các honeypot phải là các cổng khác nhau." >&2
+        exit 1
+    fi
+done
 
 if ! command -v ufw >/dev/null 2>&1; then
     echo "LỖI: ufw chưa được cài. Chạy: sudo apt-get install -y ufw" >&2
@@ -46,6 +49,9 @@ ufw limit "${COWRIE_SSH_INTERNAL_PORT}/tcp" comment 'cowrie honeypot ssh (intern
 echo "==> Rate-limit cổng Cowrie Telnet nội bộ (đích sau NAT redirect từ 23): $COWRIE_TELNET_INTERNAL_PORT/tcp"
 ufw limit "${COWRIE_TELNET_INTERNAL_PORT}/tcp" comment 'cowrie honeypot telnet (internal, NAT target, rate-limited)'
 
+echo "==> Rate-limit cổng HTTP honeypot nội bộ (đích sau NAT redirect từ 80): $HTTP_HONEYPOT_INTERNAL_PORT/tcp"
+ufw limit "${HTTP_HONEYPOT_INTERNAL_PORT}/tcp" comment 'http honeypot admin login page (internal, NAT target, rate-limited)'
+
 echo "==> Default deny incoming, allow outgoing"
 ufw default deny incoming
 ufw default allow outgoing
@@ -61,15 +67,17 @@ cat <<EOF
   - $ADMIN_SSH_PORT/tcp mở (SSH thật, không giới hạn)
   - $COWRIE_SSH_INTERNAL_PORT/tcp mở, rate-limited (Cowrie SSH - đích sau NAT từ cổng 22 public)
   - $COWRIE_TELNET_INTERNAL_PORT/tcp mở, rate-limited (Cowrie Telnet - đích sau NAT từ cổng 23 public)
+  - $HTTP_HONEYPOT_INTERNAL_PORT/tcp mở, rate-limited (trang admin login giả - đích sau NAT từ cổng 80 public)
   - Mọi cổng khác bị chặn từ bên ngoài
 
 Rate-limit (ufw limit) = 1 IP kết nối mới >= 6 lần trong 30 giây sẽ bị REJECT
 tạm thời cho tới khi giảm tần suất. Đủ để chặn bot spam hàng nghìn lượt/vài
 phút mà vẫn giữ được kha khá mẫu traffic từ mỗi IP trước khi bị chặn.
 
-Chạy script này TRƯỚC deploy/expose_cowrie_port22.sh + expose_cowrie_port23.sh
-hoặc sau đều được - thứ tự không quan trọng, chỉ cần cả 2 cùng có mặt để
-traffic public 22/23 thật sự chạm được tới Cowrie.
+Chạy script này TRƯỚC deploy/expose_cowrie_port22.sh + expose_cowrie_port23.sh +
+expose_webtrap_port80.sh hoặc sau đều được - thứ tự không quan trọng, chỉ
+cần cả 2 phía (ufw + NAT) cùng có mặt để traffic public thật sự chạm được
+tới từng honeypot.
 
 QUAN TRỌNG: đừng đóng session SSH hiện tại cho tới khi bạn đã mở một
 session SSH MỚI tới cổng $ADMIN_SSH_PORT và xác nhận vào được thành công.

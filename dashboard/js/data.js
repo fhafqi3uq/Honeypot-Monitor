@@ -15,6 +15,13 @@ function eventStatusLabel(event) {
         case "cowrie.command.input":  return { status: "failed",  label: "⌨ Command" }
         case "cowrie.session.connect": return { status: "failed", label: "→ Connect" }
         case "cowrie.session.closed":  return { status: "failed", label: "■ Closed" }
+        // parser/http_honeypot.py - the fake admin login page, a second
+        // honeypot service alongside Cowrie's SSH/Telnet. Every submitted
+        // login is always rejected (this service never "lets anyone in"
+        // the way Cowrie's AuthRandom sometimes does), so it's styled like
+        // cowrie.login.failed, never the 'success' badge.
+        case "http.login.attempt": return { status: "failed", label: "🌐 HTTP Login" }
+        case "http.request":       return { status: "failed", label: "🌐 HTTP Request" }
         default: return { status: "failed", label: event }
     }
 }

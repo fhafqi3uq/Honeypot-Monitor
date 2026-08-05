@@ -58,6 +58,7 @@ sai, không cần phản hồi trừ khi provider yêu cầu.
 ```
 Internet ──▶ VPS:22  (Cowrie giả lập SSH — CÔNG KHAI, đây là mục đích)
 Internet ──▶ VPS:23  (Cowrie giả lập Telnet — CÔNG KHAI, cùng mục đích)
+Internet ──▶ VPS:80  (parser/http_honeypot.py — trang admin login giả, CÔNG KHAI)
 Internet ──▶ VPS:<ADMIN_SSH_PORT>  (sshd thật — key-only, đổi khỏi 22)
 Internet ──X  mọi cổng khác bị ufw chặn
 
@@ -72,6 +73,12 @@ cổng 22/23 (privileged port). Cách chuẩn: NAT port 22 → 2222 và 23 → 2
 bằng iptables (xem bước 4), **không** đổi Cowrie sang chạy root. Mở cả
 Telnet vì nhiều botnet IoT/router quét cổng 23 tích cực hơn cả SSH — tăng
 đáng kể lượng traffic tấn công thật thu được so với chỉ mở SSH.
+
+Ngoài Cowrie, `parser/http_honeypot.py` là honeypot thứ hai — một trang
+admin login giả ("PaymentCo Admin Panel") nghe nội bộ ở cổng 8899, khớp
+với bait `var/www/html/admin/login.php` đã có sẵn trong honeyfs của Cowrie
+(xem `honeypot/README-honeyfs.md`). Cũng không chạy bằng root nên NAT
+port 80 → 8899 giống hệt cách làm với Cowrie (xem bước 4).
 
 ---
 
@@ -103,30 +110,31 @@ Chỉ sau khi bước 5 thành công mới chuyển sang phần 3.
 ## 3. Firewall — `deploy/setup_firewall.sh`
 
 ```bash
-sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_INTERNAL_PORT=2222] [COWRIE_TELNET_INTERNAL_PORT=2223]
+sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_INTERNAL_PORT=2222] [COWRIE_TELNET_INTERNAL_PORT=2223] [HTTP_HONEYPOT_INTERNAL_PORT=8899]
 ```
 
 Script bắt buộc bạn truyền `ADMIN_SSH_PORT` tường minh (không có default) để
 tránh trường hợp quên đổi cổng SSH thật rồi tự khoá mình ngoài. Xem chi tiết
-trong script — nó mở SSH admin bằng `ufw allow` (không giới hạn), 2 cổng
-Cowrie nội bộ bằng `ufw limit` (rate-limit: 1 IP kết nối mới ≥ 6 lần/30s bị
-REJECT tạm - chặn bot spam hàng nghìn lượt/vài phút mà không cần cài thêm
-gì, dùng module `recent` có sẵn của ufw), deny-by-default sau, rồi mới bật
-ufw.
+trong script — nó mở SSH admin bằng `ufw allow` (không giới hạn), 3 cổng
+honeypot nội bộ (Cowrie SSH/Telnet + trang login giả) bằng `ufw limit`
+(rate-limit: 1 IP kết nối mới ≥ 6 lần/30s bị REJECT tạm - chặn bot spam
+hàng nghìn lượt/vài phút mà không cần cài thêm gì, dùng module `recent` có
+sẵn của ufw), deny-by-default sau, rồi mới bật ufw.
 
-**Lưu ý quan trọng — allow đúng cổng NỘI BỘ (2222/2223), không phải cổng
-public (22/23)**: NAT REDIRECT ở bước 4 đổi đích gói tin trước khi nó tới
-bảng filter mà ufw quản lý, nên `ufw allow 22/tcp` không bao giờ khớp được
-gì (đã kiểm chứng: 0 packet hit) — phải allow 2222/2223 thì ufw mới thật
-sự cho traffic public 22/23 (đã bị NAT đổi đích) đi qua.
+**Lưu ý quan trọng — allow đúng cổng NỘI BỘ (2222/2223/8899), không phải
+cổng public (22/23/80)**: NAT REDIRECT ở bước 4 đổi đích gói tin trước khi
+nó tới bảng filter mà ufw quản lý, nên `ufw allow 22/tcp` không bao giờ
+khớp được gì (đã kiểm chứng: 0 packet hit) — phải allow 2222/2223/8899 thì
+ufw mới thật sự cho traffic public 22/23/80 (đã bị NAT đổi đích) đi qua.
 
 ---
 
-## 4. NAT cổng 22 + 23 vào Cowrie — `deploy/expose_cowrie_port22.sh` + `deploy/expose_cowrie_port23.sh`
+## 4. NAT cổng 22 + 23 + 80 vào honeypot — `deploy/expose_cowrie_port22.sh` + `deploy/expose_cowrie_port23.sh` + `deploy/expose_webtrap_port80.sh`
 
 ```bash
 sudo bash deploy/expose_cowrie_port22.sh [COWRIE_INTERNAL_PORT=2222]
 sudo bash deploy/expose_cowrie_port23.sh [COWRIE_INTERNAL_PORT=2223]
+sudo bash deploy/expose_webtrap_port80.sh [HTTP_HONEYPOT_INTERNAL_PORT=8899]
 ```
 
 Redirect `22 → 2222` (SSH) và `23 → 2223` (Telnet) bằng iptables PREROUTING,
@@ -137,6 +145,11 @@ tự kiểm tra không có sshd thật nào đang bind port 22 trước khi áp 
 (tránh xung đột) — nếu có, dừng lại và nhắc bạn hoàn thành phần 2 trước;
 `expose_cowrie_port23.sh` kiểm tra tương tự cho port 23 (thường trống sẵn,
 Ubuntu không cài telnetd mặc định).
+
+`expose_webtrap_port80.sh` redirect `80 → 8899` (`parser/http_honeypot.py`,
+trang admin login giả) theo cùng cách, cũng tự kiểm tra không có gì khác
+đang bind port 80 trước khi áp rule (VPS mặc định không cài web server nào
+nên thường trống sẵn).
 
 ---
 
@@ -167,12 +180,13 @@ Từ **một máy khác** (không phải VPS):
 # trong cowrie.cfg), KHÔNG phải banner sshd/telnetd thật của Ubuntu/Debian:
 ssh -p 22 root@<vps-ip>          # kỳ vọng: nhận prompt/banner Cowrie, không phải lỗi permission thật
 telnet <vps-ip> 23                # kỳ vọng: banner login giả, không phải telnetd thật (thường không cài sẵn)
+curl http://<vps-ip>/admin/login.php  # kỳ vọng: HTML trang login giả "PaymentCo Admin Panel"
 
 # Dashboard/API KHÔNG được lộ ra ngoài:
 curl -m 3 http://<vps-ip>:8000/  # kỳ vọng: timeout hoặc connection refused
 curl -m 3 http://<vps-ip>:8080/  # kỳ vọng: timeout hoặc connection refused
 
-# nmap nhanh (nếu có) — public chỉ nên thấy 22 + 23 (Cowrie) + ADMIN_SSH_PORT:
+# nmap nhanh (nếu có) — public chỉ nên thấy 22 + 23 + 80 (honeypot) + ADMIN_SSH_PORT:
 nmap -Pn <vps-ip>
 ```
 
@@ -206,8 +220,10 @@ ssh -p <ADMIN_SSH_PORT> -L 8080:127.0.0.1:8080 -L 8000:127.0.0.1:8000 \
 ```bash
 sudo ufw deny 22/tcp                    # ngắt traffic SSH vào Cowrie ngay lập tức
 sudo ufw deny 23/tcp                    # ngắt traffic Telnet vào Cowrie ngay lập tức
+sudo ufw deny 80/tcp                    # ngắt traffic vào trang login giả ngay lập tức
 # hoặc
 cd honeypot/cowrie-src && cowrie-env/bin/cowrie stop
+pkill -f http_honeypot.py
 # hoặc dừng toàn bộ stack Docker:
 docker compose down                     # KHÔNG thêm -v (xoá sạch dữ liệu Mongo)
 ```
