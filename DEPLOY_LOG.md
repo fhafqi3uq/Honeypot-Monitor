@@ -58,11 +58,19 @@ Default: deny (incoming), allow (outgoing)
 22/tcp    ALLOW IN  Anywhere   # cowrie honeypot
 ```
 
+## Đã xong — code repo (Phần 1)
+
+- Repo đã có remote GitHub sẵn (`git@github.com:fhafqi3uq/Honeypot-Monitor.git`).
+- 2026-08-05: commit `0aaf9c0a` (MITRE ATT&CK mapping + GO_LIVE.md +
+  `deploy/` scripts + DEPLOY_LOG.md) đã push lên `origin/main`. Toàn bộ
+  pytest liên quan (`test_mitre_mapping.py`, `test_parser.py`, `test_api.py`,
+  `test_alerting.py` — 161 test) pass trước khi push.
+- Bước kế tiếp trên VPS: `git clone git@github.com:fhafqi3uq/Honeypot-Monitor.git`
+  (cần deploy key hoặc HTTPS + PAT trên VPS, vì đây là private-key-based
+  clone — VPS chưa có key riêng để pull từ GitHub).
+
 ## Chưa làm — bước tiếp theo
 
-1. **Đưa code repo lên VPS** — đang chờ quyết định: push lên GitHub rồi
-   `git clone` trên VPS, hay dùng cách khác. (Chưa xác nhận repo đã có trên
-   GitHub của bạn hay chưa.)
 2. Cài Cowrie native trên VPS (`SETUP.md` bước 3), xác nhận nó lắng nghe ở
    `2222` nội bộ.
 3. NAT cổng 22 công khai → 2222 (Cowrie) — `deploy/expose_cowrie_port22.sh`.
