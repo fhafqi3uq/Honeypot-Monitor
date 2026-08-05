@@ -20,6 +20,7 @@ echo "✅ Cowrie started"
 # đây là hệ thống có giám sát)
 cd "$PROJECT_DIR/parser"
 source venv/bin/activate
+pkill -f "uvicorn main:app" 2>/dev/null; sleep 1
 nohup uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
 echo "✅ FastAPI started tại http://localhost:8000 (chỉ nội bộ)"
 
