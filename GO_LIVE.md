@@ -57,6 +57,7 @@ sai, không cần phản hồi trừ khi provider yêu cầu.
 
 ```
 Internet ──▶ VPS:22  (Cowrie giả lập SSH — CÔNG KHAI, đây là mục đích)
+Internet ──▶ VPS:23  (Cowrie giả lập Telnet — CÔNG KHAI, cùng mục đích)
 Internet ──▶ VPS:<ADMIN_SSH_PORT>  (sshd thật — key-only, đổi khỏi 22)
 Internet ──X  mọi cổng khác bị ufw chặn
 
@@ -64,10 +65,13 @@ Bạn ──▶ SSH tunnel (-L) ──▶ 127.0.0.1:8080/8000/3000/9090 trên VP
         (dashboard/API/Grafana/Prometheus — KHÔNG public)
 ```
 
-Cowrie trong repo này (`honeypot/cowrie.cfg`) lắng nghe ở
-`tcp:2222:interface=0.0.0.0` — không chạy bằng root nên không tự bind được
-cổng 22 (privileged port). Cách chuẩn: NAT port 22 → 2222 bằng iptables (xem
-bước 4), **không** đổi Cowrie sang chạy root.
+Cowrie trong repo này (`honeypot/cowrie.cfg`) lắng nghe SSH ở
+`tcp:2222:interface=0.0.0.0` và Telnet ở `tcp:2223:interface=0.0.0.0`
+(`[telnet] enabled = true`) — không chạy bằng root nên không tự bind được
+cổng 22/23 (privileged port). Cách chuẩn: NAT port 22 → 2222 và 23 → 2223
+bằng iptables (xem bước 4), **không** đổi Cowrie sang chạy root. Mở cả
+Telnet vì nhiều botnet IoT/router quét cổng 23 tích cực hơn cả SSH — tăng
+đáng kể lượng traffic tấn công thật thu được so với chỉ mở SSH.
 
 ---
 
@@ -99,25 +103,31 @@ Chỉ sau khi bước 5 thành công mới chuyển sang phần 3.
 ## 3. Firewall — `deploy/setup_firewall.sh`
 
 ```bash
-sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_PORT=22]
+sudo bash deploy/setup_firewall.sh <ADMIN_SSH_PORT> [COWRIE_SSH_PORT=22] [COWRIE_TELNET_PORT=23]
 ```
 
 Script bắt buộc bạn truyền `ADMIN_SSH_PORT` tường minh (không có default) để
 tránh trường hợp quên đổi cổng SSH thật rồi tự khoá mình ngoài. Xem chi tiết
-trong script — nó allow 2 cổng đó trước, deny-by-default sau, rồi mới bật
-ufw.
+trong script — nó allow 3 cổng đó trước (SSH admin, Cowrie SSH, Cowrie
+Telnet), deny-by-default sau, rồi mới bật ufw.
 
 ---
 
-## 4. NAT cổng 22 vào Cowrie — `deploy/expose_cowrie_port22.sh`
+## 4. NAT cổng 22 + 23 vào Cowrie — `deploy/expose_cowrie_port22.sh` + `deploy/expose_cowrie_port23.sh`
 
 ```bash
 sudo bash deploy/expose_cowrie_port22.sh [COWRIE_INTERNAL_PORT=2222]
+sudo bash deploy/expose_cowrie_port23.sh [COWRIE_INTERNAL_PORT=2223]
 ```
 
-Redirect `22 → 2222` bằng iptables PREROUTING, persist qua reboot. Script tự
-kiểm tra không có sshd thật nào đang bind port 22 trước khi áp rule (tránh
-xung đột) — nếu có, dừng lại và nhắc bạn hoàn thành phần 2 trước.
+Redirect `22 → 2222` (SSH) và `23 → 2223` (Telnet) bằng iptables PREROUTING,
+persist qua reboot. Cowrie's `[telnet] enabled = true` trong `cowrie.cfg` -
+mở thêm Telnet vì nhiều botnet IoT/router quét cổng 23 nhiều hơn cả SSH,
+tăng lượng traffic tấn công thật thu được. Script `expose_cowrie_port22.sh`
+tự kiểm tra không có sshd thật nào đang bind port 22 trước khi áp rule
+(tránh xung đột) — nếu có, dừng lại và nhắc bạn hoàn thành phần 2 trước;
+`expose_cowrie_port23.sh` kiểm tra tương tự cho port 23 (thường trống sẵn,
+Ubuntu không cài telnetd mặc định).
 
 ---
 
@@ -144,15 +154,16 @@ local:
 Từ **một máy khác** (không phải VPS):
 
 ```bash
-# Cowrie phải trả lời ở 22, và banner phải là "svr04" (hostname giả trong
-# cowrie.cfg), KHÔNG phải banner sshd thật của Ubuntu/Debian:
+# Cowrie phải trả lời ở 22 VÀ 23, banner phải là "svr04" (hostname giả
+# trong cowrie.cfg), KHÔNG phải banner sshd/telnetd thật của Ubuntu/Debian:
 ssh -p 22 root@<vps-ip>          # kỳ vọng: nhận prompt/banner Cowrie, không phải lỗi permission thật
+telnet <vps-ip> 23                # kỳ vọng: banner login giả, không phải telnetd thật (thường không cài sẵn)
 
 # Dashboard/API KHÔNG được lộ ra ngoài:
 curl -m 3 http://<vps-ip>:8000/  # kỳ vọng: timeout hoặc connection refused
 curl -m 3 http://<vps-ip>:8080/  # kỳ vọng: timeout hoặc connection refused
 
-# nmap nhanh (nếu có) — public chỉ nên thấy 22 (Cowrie) + ADMIN_SSH_PORT:
+# nmap nhanh (nếu có) — public chỉ nên thấy 22 + 23 (Cowrie) + ADMIN_SSH_PORT:
 nmap -Pn <vps-ip>
 ```
 
@@ -181,7 +192,8 @@ ssh -p <ADMIN_SSH_PORT> -L 8080:127.0.0.1:8080 -L 8000:127.0.0.1:8000 \
 ## 8. Kill-switch (khi cần tắt nhanh)
 
 ```bash
-sudo ufw deny 22/tcp                    # ngắt traffic vào Cowrie ngay lập tức
+sudo ufw deny 22/tcp                    # ngắt traffic SSH vào Cowrie ngay lập tức
+sudo ufw deny 23/tcp                    # ngắt traffic Telnet vào Cowrie ngay lập tức
 # hoặc
 cd honeypot/cowrie-src && cowrie-env/bin/cowrie stop
 # hoặc dừng toàn bộ stack Docker:
