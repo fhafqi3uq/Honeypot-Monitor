@@ -52,16 +52,19 @@ public — giá trị thật giữ ở `DEPLOY_LOG.local.md` (gitignored, không
    icacls "E:\sshkey-88735220.pem" /remove "BUILTIN\Users"
    ```
 
-## Firewall (ufw) — đã hoàn tất (Phần 3), sửa lại 2026-08-05 (xem vướng mắc #7, #8)
+## Firewall (ufw) — đã hoàn tất (Phần 3), sửa lại 2026-08-05 (xem vướng mắc #7, #8, #9)
 
 ```
 Status: active
 Default: deny (incoming), allow (outgoing)
 <ADMIN_SSH_PORT>/tcp  ALLOW IN  Anywhere   # admin ssh (real)
-2222/tcp              ALLOW IN  Anywhere   # cowrie honeypot ssh (internal, NAT target)
-2223/tcp              ALLOW IN  Anywhere   # cowrie honeypot telnet (internal, NAT target)
+2222/tcp              LIMIT IN  Anywhere   # cowrie honeypot ssh (internal, NAT target, rate-limited)
+2223/tcp              LIMIT IN  Anywhere   # cowrie honeypot telnet (internal, NAT target, rate-limited)
 ```
-Allow đúng **cổng nội bộ** (2222/2223), không phải cổng public (22/23) —
+`LIMIT` (không phải `ALLOW`) trên 2 cổng Cowrie — xem vướng mắc #9: 1 bot IP
+tạo hơn 2300 lượt kết nối trong vài phút, đổi sang `ufw limit` để tự chặn
+tạm IP nào kết nối mới ≥6 lần/30s. Allow đúng **cổng nội bộ** (2222/2223),
+không phải cổng public (22/23) —
 xem vướng mắc #8 để biết lý do.
 
 ## Đã xong — code repo (Phần 1)
@@ -174,3 +177,11 @@ xem vướng mắc #8 để biết lý do.
    default ACCEPT) che giấu nó - vá xong #7 thì #8 mới lộ ra (SSH/Telnet
    vào Cowrie đột nhiên timeout dù NAT + Cowrie đều chạy đúng). Đã sửa
    `deploy/setup_firewall.sh` để allow đúng cổng nội bộ mặc định.
+9. **1 bot IP tạo hơn 2300 lượt kết nối trong vài phút** (loop connect →
+   login → chạy lệnh → disconnect liên tục) - không có giá trị nghiên cứu
+   thêm sau vài chục lượt đầu, và không muốn 1 IP chiếm hết tài nguyên trên
+   máy 1GB RAM. Fix: đổi `deploy/setup_firewall.sh`'s 2 rule Cowrie từ
+   `ufw allow` sang `ufw limit` (module `recent` có sẵn của ufw - REJECT
+   tạm 1 IP nếu nó kết nối mới ≥6 lần/30s) thay vì tự viết rule iptables
+   riêng (tránh lặp lại đúng kiểu xung đột persistence ở vướng mắc #7/#8).
+   Không rate-limit cổng SSH admin - chỉ áp cho 2 cổng Cowrie.
