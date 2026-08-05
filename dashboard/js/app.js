@@ -8,10 +8,7 @@ function updateStats(stats) {
 function updateTable(attacks) {
   const tbody = document.getElementById('attack-tbody')
   tbody.innerHTML = attacks.map(a => {
-    const isSuccess = a.event === 'cowrie.login.success'
-    const isCommand = a.event === 'cowrie.command.input'
-    const status    = isSuccess ? 'success' : 'failed'
-    const label     = isSuccess ? '✓ Success' : isCommand ? '⌨ Command' : '✗ Failed'
+    const { status, label } = eventStatusLabel(a.event)
     return `
       <tr>
         <td style="color:#94a3b8">${escapeHtml(a.time)}</td>

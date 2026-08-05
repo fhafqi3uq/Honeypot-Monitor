@@ -1,5 +1,24 @@
 const API_URL = "http://localhost:8000"
 
+// Shared by index.html (via app.js), attacks.html, and search.html's attack
+// tables. Only cowrie.login.failed is an actual failed login attempt -
+// session.connect/session.closed are just connection lifecycle events (a
+// bot that only port-scans/banner-grabs without ever trying a login closes
+// the session too), so labeling them "✗ Failed" the same as a real failed
+// login attempt was misleading. Badge CSS class stays 'failed' (neutral
+// blue) for all of these non-success cases - only login.success gets the
+// 'success' (red/critical) styling.
+function eventStatusLabel(event) {
+    switch (event) {
+        case "cowrie.login.success":  return { status: "success", label: "✓ Success" }
+        case "cowrie.login.failed":   return { status: "failed",  label: "✗ Failed" }
+        case "cowrie.command.input":  return { status: "failed",  label: "⌨ Command" }
+        case "cowrie.session.connect": return { status: "failed", label: "→ Connect" }
+        case "cowrie.session.closed":  return { status: "failed", label: "■ Closed" }
+        default: return { status: "failed", label: event }
+    }
+}
+
 async function fetchStats() {
     try {
         const res = await authFetch(`${API_URL}/api/stats`)
