@@ -31,3 +31,7 @@ honeypot/cowrie.json
 # nấy có, không liên quan tới người khác clone repo
 .claude/settings.local.json
 .codegraph/
+
+# IP/cổng/instance ID thật của VPS - chỉ giữ local, DEPLOY_LOG.md (tracked)
+# dùng placeholder thay cho các giá trị này
+DEPLOY_LOG.local.md
