@@ -145,13 +145,25 @@ def alert_login_success(ip: str, username: str, password: str):
     )
     return send_message(msg)
 
-def alert_command(ip: str, command: str):
+MAX_COMMANDS_SHOWN = 25
+
+def alert_session_commands(ip: str, commands: list):
+    """One alert per SESSION instead of one per command - realtime_alert.py
+    buffers cowrie.command.input events (see SESSION_CACHE) and calls this
+    once at cowrie.session.closed. An attacker session running dozens of
+    recon commands used to fire a separate Telegram push per line, which
+    buried the higher-signal login alerts under command spam."""
     info = get_ip_info(ip)
     label, _ = get_severity("cowrie.command.input")
+    shown = commands[:MAX_COMMANDS_SHOWN]
+    numbered = "\n".join(f"{i}. <code>{_esc(c)}</code>" for i, c in enumerate(shown, start=1))
+    more = len(commands) - len(shown)
+    if more > 0:
+        numbered += f"\n… và {more} lệnh khác (xem đầy đủ trên dashboard)"
     msg = (
         f"{label}\n━━━━━━━━━━━━━━━\n"
         f"🌐 IP: <code>{_esc(ip)}</code>\n"
         f"📍 Vị trí: <b>{_esc(info['location'])}</b>\n"
-        f"⌨️ Lệnh: <code>{_esc(command)}</code>"
+        f"⌨️ {len(commands)} lệnh đã chạy trong phiên:\n{numbered}"
     )
     return send_message(msg)

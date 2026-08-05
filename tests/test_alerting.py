@@ -20,6 +20,7 @@ import requests
 
 from conftest import (
     make_client_version_event,
+    make_closed_event,
     make_command_event,
     make_connect_event,
     make_kex_event,
@@ -120,7 +121,7 @@ class TestTelegramHTMLEscaping:
         mock_post = Mock(return_value=Mock(status_code=200))
         monkeypatch.setattr(requests, "post", mock_post)
 
-        bot.alert_command("127.0.0.1", "<script>alert(1)</script>")
+        bot.alert_session_commands("127.0.0.1", ["<script>alert(1)</script>"])
 
         sent_text = mock_post.call_args.kwargs["json"]["text"]
         assert "<script>" not in sent_text
@@ -147,7 +148,7 @@ class TestRealtimeAlertRouting:
         mocks = {
             "alert_login_failed": Mock(),
             "alert_login_success": Mock(),
-            "alert_command": Mock(),
+            "alert_session_commands": Mock(),
         }
         for name, mock in mocks.items():
             monkeypatch.setattr(module, name, mock)
@@ -163,7 +164,7 @@ class TestRealtimeAlertRouting:
 
         mocks["alert_login_failed"].assert_called_once_with("203.0.113.7", "root", "123456", 1)
         mocks["alert_login_success"].assert_not_called()
-        mocks["alert_command"].assert_not_called()
+        mocks["alert_session_commands"].assert_not_called()
 
     def test_al02_login_success_triggers_alert_login_success(self, fresh_module, monkeypatch):
         realtime_alert = fresh_module("realtime_alert")
@@ -175,19 +176,55 @@ class TestRealtimeAlertRouting:
 
         mocks["alert_login_success"].assert_called_once_with("203.0.113.7", "root", "toor")
         mocks["alert_login_failed"].assert_not_called()
-        mocks["alert_command"].assert_not_called()
+        mocks["alert_session_commands"].assert_not_called()
 
-    def test_al03_command_input_triggers_alert_command(self, fresh_module, monkeypatch):
+    def test_al03_command_input_only_buffers_no_immediate_alert(self, fresh_module, monkeypatch):
+        """Commands no longer fire a Telegram alert per line - they're
+        buffered in SESSION_CACHE and only summarized once, at
+        cowrie.session.closed (see test_al03b)."""
         realtime_alert = fresh_module("realtime_alert")
         mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
 
         realtime_alert.process_event(
-            make_command_event(src_ip="203.0.113.7", command="cat /etc/shadow")
+            make_command_event(session="sessA", src_ip="203.0.113.7", command="cat /etc/shadow")
         )
 
-        mocks["alert_command"].assert_called_once_with("203.0.113.7", "cat /etc/shadow")
+        mocks["alert_session_commands"].assert_not_called()
         mocks["alert_login_failed"].assert_not_called()
         mocks["alert_login_success"].assert_not_called()
+        assert realtime_alert.SESSION_CACHE["sessA"]["commands"] == ["cat /etc/shadow"]
+
+    def test_al03b_session_closed_sends_one_alert_with_all_buffered_commands(
+        self, fresh_module, monkeypatch
+    ):
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        realtime_alert.process_event(make_connect_event(session="sessA", src_ip="203.0.113.7"))
+        realtime_alert.process_event(
+            make_command_event(session="sessA", src_ip="203.0.113.7", command="whoami")
+        )
+        realtime_alert.process_event(
+            make_command_event(session="sessA", src_ip="203.0.113.7", command="cat /etc/shadow")
+        )
+        realtime_alert.process_event(make_closed_event(session="sessA", src_ip="203.0.113.7"))
+
+        mocks["alert_session_commands"].assert_called_once_with(
+            "203.0.113.7", ["whoami", "cat /etc/shadow"]
+        )
+        # session cache is cleared once the session closes
+        assert "sessA" not in realtime_alert.SESSION_CACHE
+
+    def test_al03c_session_closed_with_no_commands_sends_no_alert(self, fresh_module, monkeypatch):
+        """A session that connects and closes without running any commands
+        (e.g. a failed login) shouldn't produce an empty/pointless alert."""
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        realtime_alert.process_event(make_connect_event(session="sessB", src_ip="203.0.113.7"))
+        realtime_alert.process_event(make_closed_event(session="sessB", src_ip="203.0.113.7"))
+
+        mocks["alert_session_commands"].assert_not_called()
 
     def test_al04_events_outside_important_events_trigger_no_alert(self, fresh_module, monkeypatch):
         realtime_alert = fresh_module("realtime_alert")
@@ -481,7 +518,7 @@ class TestSchemaConsistency:
         """
         log_watcher = fresh_module("log_watcher")
         realtime_alert = fresh_module("realtime_alert")
-        for name in ("alert_login_failed", "alert_login_success", "alert_command"):
+        for name in ("alert_login_failed", "alert_login_success", "alert_session_commands"):
             monkeypatch.setattr(realtime_alert, name, Mock())
 
         events = [

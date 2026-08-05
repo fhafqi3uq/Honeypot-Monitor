@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timezone
 from pymongo import MongoClient
 from prometheus_client import start_http_server
-from bot import alert_login_failed, alert_login_success, alert_command
+from bot import alert_login_failed, alert_login_success, alert_session_commands
 from notify_log_setup import get_logger
 from notify_mitre_mapping import map_mitre_techniques
 import notify_metrics
@@ -91,6 +91,10 @@ def update_session_cache(raw: dict):
         cache = SESSION_CACHE.setdefault(session, {})
         cache["hassh"] = raw.get("hassh")
         cache["hasshAlgorithms"] = raw.get("hasshAlgorithms")
+    elif eventid == "cowrie.command.input":
+        # Buffered here, not alerted on immediately - see alert_session_commands().
+        cache = SESSION_CACHE.setdefault(session, {})
+        cache.setdefault("commands", []).append(raw.get("input"))
 
 def get_geo(ip: str) -> dict:
     if ip.startswith(("127.", "192.168.", "10.", "172.")):
@@ -165,14 +169,12 @@ def process_event(raw: dict):
     notify_metrics.REALTIME_ALERT_EVENTS_PROCESSED.labels(eventid).inc()
     notify_metrics.REALTIME_ALERT_LAST_EVENT_TIMESTAMP.set(time.time())
 
-    # session closed -> nothing else will reference this session's cache
-    if eventid == "cowrie.session.closed":
-        SESSION_CACHE.pop(session, None)
-
-    # Gửi Telegram ngay lập tức
+    # Gửi Telegram. Lệnh (cowrie.command.input) KHÔNG alert ngay từng dòng
+    # nữa - chỉ gom vào SESSION_CACHE (xem update_session_cache) và gửi 1
+    # alert tóm tắt khi session đóng, tránh dội hàng chục tin Telegram cho
+    # 1 phiên tấn công chạy nhiều lệnh recon liên tiếp.
     username = raw.get("username", "?")
     password = raw.get("password", "?")
-    command  = raw.get("input", "?")
 
     if eventid == "cowrie.login.failed":
         alert_login_failed(ip, username, password, 1)
@@ -184,10 +186,19 @@ def process_event(raw: dict):
         logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
         notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
-    elif eventid == "cowrie.command.input":
-        alert_command(ip, command)
-        logger.info("Sent command-input Telegram alert", extra={"ip": ip, "event": eventid})
-        notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
+    elif eventid == "cowrie.session.closed":
+        commands = cached.get("commands", [])
+        if commands:
+            alert_session_commands(ip, commands)
+            logger.info(
+                "Sent session-commands Telegram alert",
+                extra={"ip": ip, "event": eventid, "session": session},
+            )
+            notify_metrics.TELEGRAM_ALERTS_SENT.labels("cowrie.session.commands").inc()
+
+    # session closed -> nothing else will reference this session's cache
+    if eventid == "cowrie.session.closed":
+        SESSION_CACHE.pop(session, None)
 
 def _load_offset(current_inode):
     """Returns a saved byte position to resume from, or None if there's no
