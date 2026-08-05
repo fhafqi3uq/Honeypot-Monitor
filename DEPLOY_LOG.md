@@ -72,13 +72,62 @@ Default: deny (incoming), allow (outgoing)
   — không cần deploy key/PAT gì cả, repo public nên clone qua HTTPS không cần
   xác thực.
 
+## Đã xong — Cowrie + NAT + stack (Phần 4, 5, 6) — 2026-08-05
+
+- Cowrie cài native, `pip install -e .` (thiếu bước này trong `SETUP.md` cũ,
+  đã fix), nghe ở `2222` nội bộ, NAT `22 → 2222` bằng
+  `deploy/expose_cowrie_port22.sh`. Verify từ máy khác: `ssh -p 22
+  root@<VPS_IP>` thấy đúng banner Cowrie giả (`svr04`), không phải sshd thật.
+- **Chạy NATIVE (venv), không phải Docker Compose** — xem "Vướng mắc #4" bên
+  dưới để biết lý do đổi hướng giữa chừng. `bash start.sh` khởi động
+  mongod + Cowrie + FastAPI (127.0.0.1:8000) + dashboard live-server
+  (127.0.0.1:8080) + realtime-alert + daily-report + cleanup +
+  telegram-commands + healthcheck loop, tất cả bằng nohup.
+- Đã tạo tài khoản admin (`parser/create_admin.py`), đăng nhập dashboard qua
+  SSH tunnel (`-L 8080:127.0.0.1:8080 -L 8000:127.0.0.1:8000`) thành công.
+  `curl` trực tiếp vào `<VPS_IP>:8000`/`:8080` từ bên ngoài bị refused —
+  đúng ý muốn, không lộ public.
+- RAM ổn định ~49-54%, load < 0.2, swap 1GB gần như không dùng tới.
+
 ## Chưa làm — bước tiếp theo
 
-2. Cài Cowrie native trên VPS (`SETUP.md` bước 3), xác nhận nó lắng nghe ở
-   `2222` nội bộ.
-3. NAT cổng 22 công khai → 2222 (Cowrie) — `deploy/expose_cowrie_port22.sh`.
-4. Xác minh từ máy khác: `ssh -p 22 root@<VPS_IP>` phải thấy banner
-   Cowrie giả (`svr04`), không phải sshd thật.
-5. Sinh secrets thật trên VPS (`deploy/generate_prod_secrets.sh`), rồi
-   `docker compose up -d --build` (bỏ Prometheus/Grafana do RAM 1GB).
-6. Test dashboard/API qua SSH tunnel (cổng `<ADMIN_SSH_PORT>`), không public.
+- Đặt `healthcheck.sh` chạy qua cron thay vì chỉ chạy trong `start.sh` (Phần
+  7 `GO_LIVE.md`) — hiện chỉ sống khi shell `start.sh` còn chạy (nohup, nên
+  vẫn sống sau khi đóng SSH, nhưng không tự phục hồi nếu máy reboot).
+- **Cowrie/`start.sh` chưa có systemd unit** — không tự chạy lại sau reboot,
+  phải SSH vào chạy `bash start.sh` lại thủ công mỗi lần VPS khởi động lại.
+- **Quan trọng**: nâng cấp lên gói trả phí trước **07:00 08-08-2026**, không
+  thì toàn bộ (kể cả code/data) bị xoá cùng máy trial.
+
+## Vướng mắc đã gặp và cách xử lý (để không lặp lại lỗi)
+
+4. **Docker Compose không chạy nổi trên VPS 1 CPU/1GB, kể cả sau khi giảm
+   bớt xuống 8 container (bỏ Prometheus/Grafana/mongodb-exporter qua Compose
+   `profiles`, xem commit `d5ce3ef3`)** — nguyên nhân gốc: file secret do
+   `deploy/generate_prod_secrets.sh` tạo với quyền `600`, nhưng Compose
+   standalone bind-mount thẳng file host (không normalize như Swarm), user
+   trong container mongo không đọc được → `mongo` container crash-loop
+   (fix: đổi sang `644`, đã vá trong script). Sau khi sửa xong, `docker
+   compose up -d` (không giới hạn service) vô tình kéo cả 11 container cùng
+   lúc → **1 vCPU bị nghẽn cứng, kể cả SSH mới và console web noVNC cũng
+   treo không gõ được**. `sudo systemctl disable --now docker` (qua console)
+   giải phóng được máy, nhưng lúc đó session đã bấm nhầm nút **Rebuild**
+   (cài lại OS từ đầu) thay vì **Restart** trên panel CloudFly → mất sạch
+   toàn bộ cấu hình đã làm (user, SSH hardening, firewall, NAT, code) → phải
+   làm lại từ Phần 2. **Bài học: trên VPS ≤1GB RAM, bỏ qua Docker Compose
+   hoàn toàn, chạy `start.sh` (native) ngay từ đầu** — nhẹ hơn nhiều, không
+   có overhead build image/daemon. Cũng cẩn thận phân biệt nút **Restart**
+   (khởi động lại, giữ dữ liệu) và **Rebuild** (cài lại OS, mất sạch) trên
+   panel nhà cung cấp.
+5. **`sudo` không chạy được sau khi tạo user bằng `adduser
+   --disabled-password`** — user này không có mật khẩu nào để `sudo` xác
+   thực (không phải quên, mà chưa từng có). Fix: thêm
+   `honeypotadmin ALL=(ALL) NOPASSWD:ALL` vào `/etc/sudoers.d/honeypotadmin`
+   (`chmod 440`, `visudo -c` để kiểm tra cú pháp trước khi tin) thay vì đặt
+   thêm 1 mật khẩu phải nhớ — nhất quán với triết lý "key-only" của cả dự án.
+6. **`SETUP.md` thiếu bước `pip install -e .`** khi cài Cowrie — file
+   `requirements.txt` của Cowrie chỉ pin dependency, không tự cài chính
+   package, nên lệnh `cowrie` (từ `pyproject.toml`'s `[project.scripts]`)
+   không xuất hiện trong `cowrie-env/bin/` nếu chỉ chạy
+   `pip install -r requirements.txt`. Đã vá trong `SETUP.md` (commit
+   `ade3bb31`).
