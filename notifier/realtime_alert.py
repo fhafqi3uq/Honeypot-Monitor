@@ -13,25 +13,31 @@ logger = get_logger(__name__)
 
 METRICS_PORT = 9101
 
-# Rate-limit Telegram alerts per source IP - a bot that loops (connect,
-# login, run commands, disconnect, repeat every few seconds - real IoT
-# botnet behavior, not a bug) would otherwise fire a fresh Telegram push
-# every single cycle. Shared across login_failed/login_success/
-# session_commands: whichever fires first for an IP "uses up" the window,
-# so a real attacker's later success right after a failed attempt can be
-# suppressed too - an acceptable trade-off for "at most 1 push per IP per
-# window" rather than tracking a separate cooldown per alert type. Mongo
-# storage is never affected - every event is still stored regardless.
+# Rate-limit Telegram alerts per (source IP, alert type) - a bot that loops
+# (connect, login, run commands, disconnect, repeat every few seconds - real
+# IoT botnet behavior, not a bug) would otherwise fire a fresh Telegram push
+# every single cycle. Cooldown is tracked PER ALERT TYPE, not shared across
+# login_failed/login_success/session_commands - a shared cooldown used to
+# mean whichever fired first for an IP "used up" the window entirely, so a
+# login-success alert routinely swallowed the session-commands alert for the
+# very same session (a bot's login->commands->close cycle usually completes
+# in well under 5 minutes, so the commands alert kept landing inside the
+# window the login alert had just opened). Caught live in production
+# (2026-08-06): a captured Mirai-style command sequence never reached
+# Telegram because its session closed 2 minutes after a login-success alert
+# for the same IP. Mongo storage is never affected either way - every event
+# is always stored regardless of whether a Telegram push fires.
 ALERT_COOLDOWN_SECONDS = 5 * 60
-_LAST_ALERT_TIME: dict[str, float] = {}
+_LAST_ALERT_TIME: dict[tuple[str, str], float] = {}
 
 
-def _should_alert(ip: str) -> bool:
+def _should_alert(ip: str, alert_type: str) -> bool:
     now = time.time()
-    last = _LAST_ALERT_TIME.get(ip)
+    key = (ip, alert_type)
+    last = _LAST_ALERT_TIME.get(key)
     if last is not None and now - last < ALERT_COOLDOWN_SECONDS:
         return False
-    _LAST_ALERT_TIME[ip] = now
+    _LAST_ALERT_TIME[key] = now
     return True
 
 
@@ -198,20 +204,20 @@ def process_event(raw: dict):
     password = raw.get("password", "?")
 
     if eventid == "cowrie.login.failed":
-        if _should_alert(ip):
+        if _should_alert(ip, "login_failed"):
             alert_login_failed(ip, username, password, 1)
             logger.info("Sent brute-force Telegram alert", extra={"ip": ip, "event": eventid})
             notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.login.success":
-        if _should_alert(ip):
+        if _should_alert(ip, "login_success"):
             alert_login_success(ip, username, password)
             logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
             notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.session.closed":
         commands = cached.get("commands", [])
-        if commands and _should_alert(ip):
+        if commands and _should_alert(ip, "session_commands"):
             alert_session_commands(ip, commands)
             logger.info(
                 "Sent session-commands Telegram alert",

