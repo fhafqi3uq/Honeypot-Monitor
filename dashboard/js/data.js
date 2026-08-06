@@ -77,11 +77,6 @@ async function fetchHours() {
         const res  = await authFetch(`${API_URL}/api/stats/hourly?limit=48`)
         const data = await res.json()
 
-        const counts = {}
-        for (let h = 0; h < 24; h++) {
-            counts[String(h).padStart(2,"0") + ":00"] = 0
-        }
-
         // DB lưu UTC (`d.time` là "YYYY-MM-DDTHH:00" theo UTC), nhưng hiển
         // thị theo giờ Việt Nam (UTC+7) để khớp đồng hồ thật của người xem -
         // trước đây so theo ngày UTC nên các cột buổi chiều/tối giờ VN (đã
@@ -90,6 +85,17 @@ async function fetchHours() {
         // dữ liệu dù traffic vẫn đang vào liên tục. Mỗi cột là đúng 1 giờ
         // (0h-23h), không gộp 2 giờ/cột nữa.
         const VN_OFFSET_MS = 7 * 3600 * 1000
+
+        // Chỉ tạo cột tới giờ VN HIỆN TẠI, không cố định đủ 24 cột - một
+        // biểu đồ "hôm nay tính đến giờ" mà vẽ sẵn cả những giờ chưa xảy ra
+        // luôn để lại một khoảng trống rỗng bên phải (rõ nhất vào buổi
+        // sáng). Cột cuối (giờ hiện tại) là dữ liệu CHƯA đầy đủ trong 60
+        // phút, không phải số đã chốt.
+        const currentHourVN = new Date(Date.now() + VN_OFFSET_MS).getUTCHours()
+        const counts = {}
+        for (let h = 0; h <= currentHourVN; h++) {
+            counts[String(h).padStart(2,"0") + ":00"] = 0
+        }
         const todayVN = new Date(Date.now() + VN_OFFSET_MS).toISOString().substring(0, 10)
 
         ;(data.data || []).forEach(d => {

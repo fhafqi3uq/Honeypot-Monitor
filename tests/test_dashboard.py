@@ -413,7 +413,13 @@ class TestFetchHoursTimezone:
             f"02:00 UTC today (09:00 VN today) should land in the 09:00 VN "
             f"slot with count 3 - got {counts}"
         )
-        assert len(counts) == 24, f"expected one bucket per hour (0-23), got {len(counts)}"
+        # "now" is fixed at 17:00 VN (see above) - only hours 0..17 (18
+        # buckets) should exist. No trailing empty buckets for hours that
+        # haven't happened yet (18:00-23:00) - that dead space on the chart
+        # was itself the complaint that led to this truncation (caught live
+        # in production 2026-08-06).
+        assert len(counts) == 18, f"expected buckets 00:00..17:00 only, got {sorted(counts.keys())}"
+        assert "18:00" not in counts and "23:00" not in counts
 
 
 # ---------------------------------------------------------------------------
