@@ -134,6 +134,44 @@ class TestSearch:
 
 
 # ---------------------------------------------------------------------------
+# /api/map-data - the marker list is capped at 100 (rendering thousands of
+# Leaflet pins would be slow/cluttered), but the headline "Tổng IP" stat
+# must report the true total, not just how many markers fit under that cap.
+# ---------------------------------------------------------------------------
+class TestMapData:
+    def test_total_unique_ips_is_not_capped_at_the_100_marker_limit(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many([
+            {
+                "src_ip": f"10.0.{i // 256}.{i % 256}", "event": "cowrie.login.failed",
+                "country": "Vietnam", "latitude": 10.0 + i * 0.001, "longitude": 106.0,
+            }
+            for i in range(150)
+        ])
+
+        r = client.get("/api/map-data")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["data"]) == 100, "marker list itself should still be capped at 100"
+        assert body["total_unique_ips"] == 150, (
+            "the headline count must reflect all 150 unique IPs, not just "
+            "the 100 that fit in the rendered marker list"
+        )
+
+    def test_ips_without_geo_data_are_excluded_from_the_total(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many([
+            {"src_ip": "1.2.3.4", "event": "cowrie.login.failed", "country": "Vietnam", "latitude": 10.0, "longitude": 106.0},
+            {"src_ip": "5.6.7.8", "event": "cowrie.login.failed", "country": "Unknown", "latitude": 0, "longitude": 0},
+        ])
+
+        r = client.get("/api/map-data")
+
+        assert r.json()["total_unique_ips"] == 1
+
+
+# ---------------------------------------------------------------------------
 # API-06: every endpoint against a completely empty database
 # ---------------------------------------------------------------------------
 class TestEmptyDatabase:

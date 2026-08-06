@@ -99,7 +99,11 @@
         markers = []
 
         const countries = new Set(ips.map(d => d.country).filter(c => c && c !== "Local"))
-        document.getElementById('map-total').textContent     = ips.filter(d => d.country !== "Local").length
+        // total_unique_ips is the TRUE count across the whole collection -
+        // ips.length is capped at 100 (only that many markers get rendered
+        // on the map itself), so counting the array here used to silently
+        // under-report "Tổng IP" once past 100 unique attackers.
+        document.getElementById('map-total').textContent     = data.total_unique_ips ?? ips.length
         document.getElementById('map-countries').textContent = countries.size
 
         if (ips.length > 0) {

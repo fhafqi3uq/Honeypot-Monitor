@@ -440,8 +440,9 @@ def get_pending_alerts(user: str = Depends(auth.require_admin)):
 
 @api_router.get("/map-data")
 def get_map_data(user: str = Depends(auth.get_current_user)):
+    geo_filter = {"latitude": {"$ne": 0}, "longitude": {"$ne": 0}}
     pipeline = [
-        {"$match": {"latitude": {"$ne": 0}, "longitude": {"$ne": 0}}},
+        {"$match": geo_filter},
         {"$group": {
             "_id":          "$src_ip",
             "count":        {"$sum": 1},
@@ -456,7 +457,14 @@ def get_map_data(user: str = Depends(auth.get_current_user)):
         {"$project": {"ip": "$_id", "count": 1, "country": 1,
                       "country_code": 1, "city": 1, "latitude": 1, "longitude": 1, "_id": 0}}
     ]
-    return {"data": list(collection.aggregate(pipeline))}
+    # The map only ever renders the top 100 markers (rendering thousands of
+    # Leaflet pins would be slow and cluttered), but "Tổng IP" is a headline
+    # stat - it must report the TRUE total unique IP count, not just how
+    # many markers happened to fit under that cap (caught live in
+    # production 2026-08-06: dashboard said 400 unique IPs, this page said
+    # 100 - the same collection, just silently truncated here).
+    total_unique_ips = len(collection.distinct("src_ip", geo_filter))
+    return {"data": list(collection.aggregate(pipeline)), "total_unique_ips": total_unique_ips}
 
 @api_router.get("/stats/hourly")
 def get_hourly_stats(limit: int = 24, user: str = Depends(auth.get_current_user)):
