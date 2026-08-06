@@ -78,6 +78,13 @@ source venv/bin/activate
 pkill -f http_honeypot_alert.py 2>/dev/null; nohup python3 -u http_honeypot_alert.py > /tmp/http_honeypot_alert.log 2>&1 &
 echo "✅ HTTP honeypot alert watcher started"
 
+# Auto-block (IP nào >= AUTO_BLOCK_THRESHOLD sự kiện/24h thì tự "ufw insert
+# deny" - cần sudo NOPASSWD cho lệnh ufw, xem GO_LIVE.md)
+cd "$PROJECT_DIR/notifier"
+source venv/bin/activate
+pkill -f auto_block.py 2>/dev/null; nohup python3 -u auto_block.py > /tmp/auto_block.log 2>&1 &
+echo "✅ Auto-block watcher started (ngưỡng mặc định 2000 sự kiện/24h)"
+
 # Healthcheck mỗi 30 giây
 pkill -f "while true.*healthcheck" 2>/dev/null
 nohup bash -c 'while true; do bash $PROJECT_DIR/healthcheck.sh >> /tmp/healthcheck.log 2>&1; sleep 30; done' > /dev/null 2>&1 &

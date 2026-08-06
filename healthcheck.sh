@@ -86,6 +86,10 @@ check_and_restart "HTTP Honeypot Alert" \
     "pgrep -f 'http_honeypot_alert.py'" \
     "cd ~/Honeypot-Monitor/notifier && source venv/bin/activate && nohup python3 http_honeypot_alert.py > /tmp/http_honeypot_alert.log 2>&1 &"
 
+check_and_restart "Auto Block" \
+    "pgrep -f 'auto_block.py'" \
+    "cd ~/Honeypot-Monitor/notifier && source venv/bin/activate && nohup python3 auto_block.py > /tmp/auto_block.log 2>&1 &"
+
 # Gửi Telegram nếu có service chết
 if [ $STATUS -eq 1 ]; then
     send_telegram "⚠️ <b>CẢNH BÁO HỆ THỐNG</b>

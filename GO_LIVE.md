@@ -220,6 +220,21 @@ ssh -p <ADMIN_SSH_PORT> -L 8080:127.0.0.1:8080 -L 8000:127.0.0.1:8000 \
   báo real-time (phát hiện đúng vấn đề này lúc live-test 2026-08-05).
   `healthcheck.sh` đã có check riêng cho cả `http_honeypot.py` lẫn
   `http_honeypot_alert.py`, tự khởi động lại nếu chết.
+- **Tự động chặn IP quá ngưỡng**: `notifier/auto_block.py` (chạy sẵn qua
+  `start.sh`) poll Mongo mỗi 60 giây, IP nào có ≥ 2000 sự kiện trong 24h
+  gần nhất (`AUTO_BLOCK_THRESHOLD`/`AUTO_BLOCK_WINDOW_HOURS`) sẽ tự động
+  bị `ufw insert 1 deny` + báo Telegram — không cần bạn tự canh và chặn
+  tay như `103.18.13.24`/`72.255.33.192` trước đây. Ghi lại vào collection
+  Mongo `blocked_ips` để không chèn trùng rule mỗi lần poll.
+  **Yêu cầu**: user chạy honeypot (vd `honeypotadmin`) cần quyền
+  `sudo ufw` KHÔNG hỏi mật khẩu (NOPASSWD), vì script chạy nền không có
+  TTY để nhập password. Thêm dòng sau vào `sudo visudo` nếu chưa có:
+  ```
+  honeypotadmin ALL=(ALL) NOPASSWD: /usr/sbin/ufw
+  ```
+  Nếu thiếu quyền này, `auto_block.py` sẽ tự log lỗi mỗi lần thử chặn thất
+  bại (xem `honeypot_auto_block_failures_total` trên Prometheus/log) thay
+  vì crash, không chặn các service khác.
 
 ---
 

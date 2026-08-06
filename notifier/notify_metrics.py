@@ -73,6 +73,14 @@ WEEKLY_REPORT_SEND_FAILURES = Counter(
     "honeypot_weekly_report_send_failures_total", "Weekly report runs where the Telegram send failed"
 )
 
+# --- auto_block.py ------------------------------------------------------------
+AUTO_BLOCK_TOTAL = Counter(
+    "honeypot_auto_block_total", "IPs automatically firewalled off for exceeding the abuse threshold"
+)
+AUTO_BLOCK_FAILURES = Counter(
+    "honeypot_auto_block_failures_total", "Attempts to auto-block an IP where the ufw command itself failed"
+)
+
 # --- http_honeypot_alert.py --------------------------------------------------
 HTTP_HONEYPOT_ALERT_PROCESSED = Counter(
     "honeypot_http_honeypot_alert_processed_total",

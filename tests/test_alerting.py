@@ -828,6 +828,114 @@ class TestHttpHoneypotAlert:
 
 
 # ---------------------------------------------------------------------------
+# notifier/auto_block.py - watches Mongo for source IPs over an abuse
+# threshold within a rolling window and firewalls them off automatically via
+# `ufw insert 1 deny`, so a flooding IP no longer needs a human to notice and
+# block it by hand.
+# ---------------------------------------------------------------------------
+class TestAutoBlock:
+    def _seed_events(self, module, ip, count, hours_ago=1):
+        ts = (datetime.utcnow() - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S")
+        module.collection.insert_many([
+            {"src_ip": ip, "event": "cowrie.login.failed", "timestamp": ts}
+            for _ in range(count)
+        ])
+
+    def test_ab01_ip_over_threshold_gets_blocked_and_recorded(self, fresh_module, monkeypatch):
+        auto_block = fresh_module("auto_block")
+        monkeypatch.setattr(auto_block, "THRESHOLD", 100)
+        self._seed_events(auto_block, "203.0.113.7", 150)
+        mock_run = Mock(return_value=Mock(returncode=0))
+        monkeypatch.setattr(auto_block.subprocess, "run", mock_run)
+        mock_send = Mock(return_value=True)
+        monkeypatch.setattr(auto_block, "send_message", mock_send)
+
+        auto_block.process_over_threshold_ips()
+
+        mock_run.assert_called_once_with(
+            ["sudo", auto_block.UFW_PATH, "insert", "1", "deny", "from", "203.0.113.7", "to", "any"],
+            check=True, capture_output=True, timeout=10, text=True,
+        )
+        blocked = auto_block.blocked_col.find_one({"_id": "203.0.113.7"})
+        assert blocked is not None
+        assert blocked["count_at_block"] == 150
+        mock_send.assert_called_once()
+        assert "203.0.113.7" in mock_send.call_args.args[0]
+
+    def test_ab02_ip_under_threshold_is_not_blocked(self, fresh_module, monkeypatch):
+        auto_block = fresh_module("auto_block")
+        monkeypatch.setattr(auto_block, "THRESHOLD", 100)
+        self._seed_events(auto_block, "203.0.113.7", 50)
+        mock_run = Mock()
+        monkeypatch.setattr(auto_block.subprocess, "run", mock_run)
+
+        auto_block.process_over_threshold_ips()
+
+        mock_run.assert_not_called()
+        assert auto_block.blocked_col.find_one({"_id": "203.0.113.7"}) is None
+
+    def test_ab03_already_blocked_ip_is_not_reprocessed(self, fresh_module, monkeypatch):
+        """Avoids inserting a duplicate ufw rule every poll cycle for an IP
+        that's still attacking after being blocked."""
+        auto_block = fresh_module("auto_block")
+        monkeypatch.setattr(auto_block, "THRESHOLD", 100)
+        self._seed_events(auto_block, "203.0.113.7", 150)
+        auto_block.blocked_col.insert_one({
+            "_id": "203.0.113.7", "count_at_block": 100,
+            "window_hours": 24, "blocked_at": datetime.utcnow(),
+        })
+        mock_run = Mock()
+        monkeypatch.setattr(auto_block.subprocess, "run", mock_run)
+
+        auto_block.process_over_threshold_ips()
+
+        mock_run.assert_not_called()
+
+    def test_ab04_private_ips_are_never_auto_blocked(self, fresh_module, monkeypatch):
+        auto_block = fresh_module("auto_block")
+        monkeypatch.setattr(auto_block, "THRESHOLD", 10)
+        self._seed_events(auto_block, "192.168.1.50", 50)
+        mock_run = Mock()
+        monkeypatch.setattr(auto_block.subprocess, "run", mock_run)
+
+        auto_block.process_over_threshold_ips()
+
+        mock_run.assert_not_called()
+
+    def test_ab05_events_outside_the_window_do_not_count_toward_threshold(
+        self, fresh_module, monkeypatch
+    ):
+        auto_block = fresh_module("auto_block")
+        monkeypatch.setattr(auto_block, "THRESHOLD", 100)
+        monkeypatch.setattr(auto_block, "WINDOW_HOURS", 24)
+        self._seed_events(auto_block, "203.0.113.7", 150, hours_ago=48)
+        mock_run = Mock()
+        monkeypatch.setattr(auto_block.subprocess, "run", mock_run)
+
+        auto_block.process_over_threshold_ips()
+
+        mock_run.assert_not_called()
+
+    def test_ab06_ufw_failure_is_not_recorded_as_blocked(self, fresh_module, monkeypatch):
+        auto_block = fresh_module("auto_block")
+        monkeypatch.setattr(auto_block, "THRESHOLD", 100)
+        self._seed_events(auto_block, "203.0.113.7", 150)
+        monkeypatch.setattr(
+            auto_block.subprocess, "run",
+            Mock(side_effect=auto_block.subprocess.CalledProcessError(1, "ufw")),
+        )
+        mock_send = Mock(return_value=True)
+        monkeypatch.setattr(auto_block, "send_message", mock_send)
+        before = auto_block.notify_metrics.AUTO_BLOCK_FAILURES._value.get()
+
+        auto_block.process_over_threshold_ips()
+
+        assert auto_block.blocked_col.find_one({"_id": "203.0.113.7"}) is None
+        mock_send.assert_not_called()
+        assert auto_block.notify_metrics.AUTO_BLOCK_FAILURES._value.get() == before + 1
+
+
+# ---------------------------------------------------------------------------
 # AL-11: schema drift between log_watcher.py and realtime_alert.py
 # ---------------------------------------------------------------------------
 class TestSchemaConsistency:
