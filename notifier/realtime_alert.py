@@ -205,20 +205,20 @@ def process_event(raw: dict):
 
     if eventid == "cowrie.login.failed":
         if _should_alert(ip, "login_failed"):
-            alert_login_failed(ip, username, password, 1)
+            alert_login_failed(ip, username, password, 1, geo=geo)
             logger.info("Sent brute-force Telegram alert", extra={"ip": ip, "event": eventid})
             notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.login.success":
         if _should_alert(ip, "login_success"):
-            alert_login_success(ip, username, password)
+            alert_login_success(ip, username, password, geo=geo)
             logger.info("Sent login-success Telegram alert", extra={"ip": ip, "event": eventid})
             notify_metrics.TELEGRAM_ALERTS_SENT.labels(eventid).inc()
 
     elif eventid == "cowrie.session.closed":
         commands = cached.get("commands", [])
         if commands and _should_alert(ip, "session_commands"):
-            alert_session_commands(ip, commands)
+            alert_session_commands(ip, commands, geo=geo)
             logger.info(
                 "Sent session-commands Telegram alert",
                 extra={"ip": ip, "event": eventid, "session": session},

