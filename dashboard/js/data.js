@@ -59,13 +59,20 @@ async function fetchHours() {
             counts[String(h).padStart(2,"0") + ":00"] = 0
         }
 
-        // Lấy ngày hôm nay theo UTC (vì DB lưu UTC)
-        const todayUTC = new Date().toISOString().substring(0, 10)
+        // DB lưu UTC (`d.time` là "YYYY-MM-DDTHH:00" theo UTC), nhưng hiển
+        // thị theo giờ Việt Nam (UTC+7) để khớp đồng hồ thật của người xem -
+        // trước đây so theo ngày UTC nên các cột buổi chiều/tối giờ VN (đã
+        // là "ngày mai" theo UTC lúc gần nửa đêm, hoặc ngược lại "giờ tương
+        // lai chưa tới" theo UTC vào ban ngày VN) bị lọc mất, nhìn như thiếu
+        // dữ liệu dù traffic vẫn đang vào liên tục.
+        const VN_OFFSET_MS = 7 * 3600 * 1000
+        const todayVN = new Date(Date.now() + VN_OFFSET_MS).toISOString().substring(0, 10)
 
         ;(data.data || []).forEach(d => {
-            if (!d.time || !d.time.startsWith(todayUTC)) return
-            const hour = parseInt(d.time.substring(11, 13))
-            const slot = Math.floor(hour / 2) * 2
+            if (!d.time) return
+            const vnDate = new Date(new Date(d.time + "Z").getTime() + VN_OFFSET_MS)
+            if (vnDate.toISOString().substring(0, 10) !== todayVN) return
+            const slot = Math.floor(vnDate.getUTCHours() / 2) * 2
             const key  = String(slot).padStart(2, "0") + ":00"
             if (counts[key] !== undefined) counts[key] += d.count
         })

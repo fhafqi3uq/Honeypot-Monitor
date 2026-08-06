@@ -367,3 +367,49 @@ class TestAuthFetchForwardsOptions:
             "authFetch() must forward the {method, headers} options it's given"
         )
         assert page.locator("#totp-secret").inner_text().strip() != ""
+
+
+# ---------------------------------------------------------------------------
+# fetchHours() (dashboard/js/data.js) used to bucket "Tấn công theo giờ" by
+# UTC calendar day, with no timezone conversion - confusing for a Vietnamese
+# viewer (UTC+7): an event from 20:00 UTC yesterday is already 03:00 today in
+# Vietnam, but the old code excluded it (wrong UTC-calendar-day match),
+# making recent traffic look like a gap even while attacks kept arriving.
+# Caught live in production (2026-08-06).
+# ---------------------------------------------------------------------------
+class TestFetchHoursTimezone:
+    def test_fetch_hours_buckets_by_vietnam_local_day_not_utc_day(self, page, live_stack_clean):
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        _login_via_ui(page, dashboard_url, username, password)
+        page.goto(f"{dashboard_url}/index.html")
+
+        # Fixed "now": 2026-08-06T10:00:00Z = 17:00 on 2026-08-06 in Vietnam
+        # (UTC+7) - so "today" in Vietnam is 2026-08-06.
+        page.evaluate("Date.now = () => new Date('2026-08-06T10:00:00Z').getTime()")
+
+        # 20:00 UTC on 2026-08-05 = 03:00 on 2026-08-06 in Vietnam - already
+        # "today" locally despite being "yesterday" by UTC calendar date.
+        # 02:00 UTC on 2026-08-06 = 09:00 on 2026-08-06 in Vietnam - a
+        # straightforward same-day case, included under both old and new
+        # logic, kept here as a sanity check that normal data still counts.
+        page.route("**/api/stats/hourly", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"status":"success","data":['
+                 '{"time":"2026-08-05T20:00","count":5},'
+                 '{"time":"2026-08-06T02:00","count":3}'
+                 ']}',
+        ))
+
+        result = page.evaluate("async () => await fetchHours()")
+        counts = {r["hour"]: r["count"] for r in result}
+
+        assert counts["02:00"] == 5, (
+            f"20:00 UTC yesterday (03:00 VN today) should land in the 02:00 VN "
+            f"slot with count 5 - got {counts}"
+        )
+        assert counts["08:00"] == 3, (
+            f"02:00 UTC today (09:00 VN today) should land in the 08:00 VN "
+            f"slot with count 3 - got {counts}"
+        )
