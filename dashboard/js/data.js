@@ -1,5 +1,22 @@
 const API_URL = "http://localhost:8000"
 
+// Mongo stores `timestamp` as UTC (Cowrie's own log line, ISO 8601 with a Z
+// or without one dependent on source - both handled here). Displayed in
+// Vietnam local time (UTC+7) to match the viewer's own wall clock - a page
+// showing raw UTC next to "Cập nhật lúc <VN local time>" looked like the
+// data was hours stale even when it wasn't (caught live in production
+// 2026-08-06). Shared by index.html/attacks.html via data.js; search.html
+// keeps its own inline copy (see that file's own comment on why).
+const VN_OFFSET_MS = 7 * 3600 * 1000
+
+function toVnTime(isoTimestamp) {
+    if (!isoTimestamp) return "--:--:--"
+    const utc = new Date(isoTimestamp.endsWith("Z") ? isoTimestamp : isoTimestamp + "Z")
+    const vn  = new Date(utc.getTime() + VN_OFFSET_MS)
+    const pad = n => String(n).padStart(2, "0")
+    return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}:${pad(vn.getUTCSeconds())}`
+}
+
 // Shared by index.html (via app.js), attacks.html, and search.html's attack
 // tables. Only cowrie.login.failed is an actual failed login attempt -
 // session.connect/session.closed are just connection lifecycle events (a
@@ -38,7 +55,7 @@ async function fetchAttacks() {
         const res  = await authFetch(`${API_URL}/api/attacks?limit=20`)
         const data = await res.json()
         return (data.data || []).map(a => ({
-            time:     a.timestamp ? a.timestamp.substring(11,19) : "--:--:--",
+            time:     toVnTime(a.timestamp),
             ip:       a.src_ip,
             username: a.username,
             password: a.password,

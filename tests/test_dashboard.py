@@ -414,3 +414,37 @@ class TestFetchHoursTimezone:
             f"slot with count 3 - got {counts}"
         )
         assert len(counts) == 24, f"expected one bucket per hour (0-23), got {len(counts)}"
+
+
+# ---------------------------------------------------------------------------
+# The attacks table's own "Thời gian" column showed raw UTC (no conversion
+# at all, unlike the hourly chart) - looked hours out of date next to a
+# "Cập nhật lúc <VN local time>" refresh timestamp right above it. Caught
+# live in production (2026-08-06).
+# ---------------------------------------------------------------------------
+class TestAttacksTableVietnamTime:
+    def test_to_vn_time_converts_utc_to_vietnam_local(self, page, live_stack_clean):
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        _login_via_ui(page, dashboard_url, username, password)
+        page.goto(f"{dashboard_url}/index.html")
+
+        result = page.evaluate("() => toVnTime('2026-08-06T02:58:53.000Z')")
+
+        assert result == "09:58:53"
+
+    def test_attacks_table_shows_vietnam_local_time_not_raw_utc(self, page, live_stack_clean):
+        api_url, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        test_db.attacks.insert_one({
+            "timestamp": "2026-08-06T02:58:53.000Z", "src_ip": "112.87.155.210",
+            "event": "cowrie.command.input", "command": "whoami",
+            "country": "China", "alerted": True,
+            "created_at": datetime.utcnow(),
+        })
+        _login_via_ui(page, dashboard_url, username, password)
+
+        page.goto(f"{dashboard_url}/attacks.html")
+
+        expect(page.locator("#attack-tbody")).to_contain_text("09:58:53")
+        expect(page.locator("#attack-tbody")).not_to_contain_text("02:58:53")

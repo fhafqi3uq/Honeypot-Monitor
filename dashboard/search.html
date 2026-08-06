@@ -108,6 +108,18 @@
   <script>
     const API_URL = "http://localhost:8000"
 
+    // Mongo stores `timestamp` as UTC - displayed in Vietnam local time
+    // (UTC+7) to match the viewer's own wall clock, same reasoning and
+    // duplicated copy as js/data.js's toVnTime() (this page doesn't load
+    // data.js - see CLAUDE.md).
+    function toVnDateTime(isoTimestamp) {
+      if (!isoTimestamp) return '--'
+      const utc = new Date(isoTimestamp.endsWith('Z') ? isoTimestamp : isoTimestamp + 'Z')
+      const vn  = new Date(utc.getTime() + 7 * 3600 * 1000)
+      const pad = n => String(n).padStart(2, '0')
+      return `${vn.getUTCFullYear()}-${pad(vn.getUTCMonth()+1)}-${pad(vn.getUTCDate())} ${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}:${pad(vn.getUTCSeconds())}`
+    }
+
     async function searchIP() {
       const ip = document.getElementById('search-input').value.trim()
       if (!ip) return
@@ -160,7 +172,7 @@
             'http.request':           { status: 'failed',  label: '🌐 HTTP Request' },
           }
           const { status, label } = EVENT_LABELS[a.event] || { status: 'failed', label: a.event }
-          const time      = a.timestamp ? a.timestamp.substring(0,19).replace('T',' ') : '--'
+          const time      = toVnDateTime(a.timestamp)
           return `
             <tr>
               <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${escapeHtml(time)}</td>
