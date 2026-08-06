@@ -51,11 +51,17 @@ async function fetchAttacks() {
 
 async function fetchHours() {
     try {
-        const res  = await authFetch(`${API_URL}/api/stats/hourly`)
+        // limit=48 (not the default 24): the backend returns the most
+        // recent N hour-buckets that actually have data, keyed by UTC hour.
+        // Since "today" below is the VIETNAM calendar day (UTC+7), it can
+        // span into the tail of the previous UTC day - 24 buckets isn't
+        // always enough to cover a full VN day once shifted, so ask for
+        // extra headroom.
+        const res  = await authFetch(`${API_URL}/api/stats/hourly?limit=48`)
         const data = await res.json()
 
         const counts = {}
-        for (let h = 0; h < 24; h += 2) {
+        for (let h = 0; h < 24; h++) {
             counts[String(h).padStart(2,"0") + ":00"] = 0
         }
 
@@ -64,7 +70,8 @@ async function fetchHours() {
         // trước đây so theo ngày UTC nên các cột buổi chiều/tối giờ VN (đã
         // là "ngày mai" theo UTC lúc gần nửa đêm, hoặc ngược lại "giờ tương
         // lai chưa tới" theo UTC vào ban ngày VN) bị lọc mất, nhìn như thiếu
-        // dữ liệu dù traffic vẫn đang vào liên tục.
+        // dữ liệu dù traffic vẫn đang vào liên tục. Mỗi cột là đúng 1 giờ
+        // (0h-23h), không gộp 2 giờ/cột nữa.
         const VN_OFFSET_MS = 7 * 3600 * 1000
         const todayVN = new Date(Date.now() + VN_OFFSET_MS).toISOString().substring(0, 10)
 
@@ -72,8 +79,7 @@ async function fetchHours() {
             if (!d.time) return
             const vnDate = new Date(new Date(d.time + "Z").getTime() + VN_OFFSET_MS)
             if (vnDate.toISOString().substring(0, 10) !== todayVN) return
-            const slot = Math.floor(vnDate.getUTCHours() / 2) * 2
-            const key  = String(slot).padStart(2, "0") + ":00"
+            const key = String(vnDate.getUTCHours()).padStart(2, "0") + ":00"
             if (counts[key] !== undefined) counts[key] += d.count
         })
 

@@ -393,7 +393,7 @@ class TestFetchHoursTimezone:
         # 02:00 UTC on 2026-08-06 = 09:00 on 2026-08-06 in Vietnam - a
         # straightforward same-day case, included under both old and new
         # logic, kept here as a sanity check that normal data still counts.
-        page.route("**/api/stats/hourly", lambda route: route.fulfill(
+        page.route("**/api/stats/hourly**", lambda route: route.fulfill(
             status=200,
             content_type="application/json",
             body='{"status":"success","data":['
@@ -405,11 +405,12 @@ class TestFetchHoursTimezone:
         result = page.evaluate("async () => await fetchHours()")
         counts = {r["hour"]: r["count"] for r in result}
 
-        assert counts["02:00"] == 5, (
-            f"20:00 UTC yesterday (03:00 VN today) should land in the 02:00 VN "
+        assert counts["03:00"] == 5, (
+            f"20:00 UTC yesterday (03:00 VN today) should land in the 03:00 VN "
             f"slot with count 5 - got {counts}"
         )
-        assert counts["08:00"] == 3, (
-            f"02:00 UTC today (09:00 VN today) should land in the 08:00 VN "
+        assert counts["09:00"] == 3, (
+            f"02:00 UTC today (09:00 VN today) should land in the 09:00 VN "
             f"slot with count 3 - got {counts}"
         )
+        assert len(counts) == 24, f"expected one bucket per hour (0-23), got {len(counts)}"
