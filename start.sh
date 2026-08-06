@@ -15,6 +15,15 @@ source cowrie-env/bin/activate
 cowrie-env/bin/cowrie start
 echo "✅ Cowrie started"
 
+# Log Watcher (tail cowrie.json -> Mongo, alerted=false - nguồn dữ liệu
+# chính cho /api/alerts/pending; ghi document RIÊNG với realtime_alert.py,
+# đúng thiết kế 2 watcher độc lập, xem CLAUDE.md)
+cd "$PROJECT_DIR/parser"
+source venv/bin/activate
+pkill -f log_watcher.py 2>/dev/null; sleep 1
+nohup python3 -u log_watcher.py > /tmp/log_watcher.log 2>&1 &
+echo "✅ Log Watcher started"
+
 # FastAPI (bind localhost only — API không xác thực, không được lộ ra cùng
 # interface public với honeypot, nếu không attacker port-scan sẽ thấy ngay
 # đây là hệ thống có giám sát)

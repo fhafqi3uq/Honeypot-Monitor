@@ -378,7 +378,16 @@ def get_attacks(
             query["timestamp"]["$gte"] = f"{start_date}T00:00:00"
         if end_date:
             query["timestamp"]["$lte"] = f"{end_date}T23:59:59"
-    attacks = list(collection.find(query, {"_id": 0}).sort("timestamp", -1).limit(limit))
+    # Sorted by created_at (a real BSON Date set server-side at insert time),
+    # not the `timestamp` string field - `timestamp` comes straight from
+    # Cowrie's own log line and sorts lexicographically, which silently
+    # breaks "most recent first" if Cowrie's clock/timezone was ever wrong
+    # for a stretch (caught live in production 2026-08-06: pre-fix events
+    # had an inflated hour digit from a 7-hour clock skew, so string-sorting
+    # put them ahead of genuinely newer, correctly-timestamped events).
+    # created_at is immune to that class of bug regardless of what Cowrie's
+    # own clock is doing.
+    attacks = list(collection.find(query, {"_id": 0}).sort("created_at", -1).limit(limit))
     return {"status": "success", "total_returned": len(attacks), "data": attacks}
 
 @api_router.get("/top-ips")
@@ -606,7 +615,8 @@ def get_human_likely_sessions(limit: int = 20, user: str = Depends(auth.get_curr
 
 @api_router.get("/search")
 def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):
-    attacks = list(collection.find({"src_ip": ip}, {"_id": 0}).sort("timestamp", -1).limit(100))
+    # created_at, not timestamp - see get_attacks()'s comment above.
+    attacks = list(collection.find({"src_ip": ip}, {"_id": 0}).sort("created_at", -1).limit(100))
     return {"ip": ip, "total": len(attacks), "data": attacks}
 
 # Admin-only, same as /api/export/csv and /api/alerts/pending: this is the
@@ -654,7 +664,8 @@ def _csv_safe(value) -> str:
 @api_router.get("/export/csv")
 def export_csv(user: str = Depends(auth.require_admin)):
     logger.info("CSV export requested by '%s'", user, extra={"username": user, "endpoint": "/api/export/csv"})
-    data   = list(collection.find({}, {"_id": 0}).sort("timestamp", -1).limit(1000))
+    # created_at, not timestamp - see get_attacks()'s comment above.
+    data   = list(collection.find({}, {"_id": 0}).sort("created_at", -1).limit(1000))
     output = io.StringIO()
     if data:
         writer = csv.DictWriter(output, fieldnames=["timestamp","src_ip","event","username","password","command","country","city"])

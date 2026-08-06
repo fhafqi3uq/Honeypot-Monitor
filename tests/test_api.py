@@ -84,6 +84,38 @@ class TestQueryParamValidation:
         assert r.status_code == 200
         assert r.json()["data"] == []
 
+    def test_api13_attacks_sorted_by_created_at_not_the_timestamp_string(self, fresh_app):
+        """`timestamp` comes straight from Cowrie's own log line and is
+        just a string - if Cowrie's clock/timezone was ever wrong for a
+        stretch (caught live in production 2026-08-06: a 7-hour skew from
+        a misconfigured system timezone), older mislabeled events can have
+        a numerically-LARGER hour digit than genuinely newer, correctly-
+        timestamped ones, and a naive string sort puts the stale data on
+        top. Sorting by created_at (a real BSON Date set server-side at
+        insert time) is immune to whatever Cowrie's own clock is doing."""
+        client, main, auth = _login(fresh_app)
+        main.collection.insert_many([
+            {
+                "timestamp": "2026-08-06T09:14:47.000000Z",  # pre-fix, skewed +7h
+                "src_ip": "1.2.3.4", "event": "cowrie.command.input",
+                "created_at": "2026-08-06T02:14:47.000Z",  # actually inserted first
+            },
+            {
+                "timestamp": "2026-08-06T02:49:40.000000Z",  # post-fix, correct
+                "src_ip": "5.6.7.8", "event": "cowrie.command.input",
+                "created_at": "2026-08-06T02:49:41.000Z",  # actually inserted later - genuinely newest
+            },
+        ])
+
+        r = client.get("/api/attacks")
+
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data[0]["src_ip"] == "5.6.7.8", (
+            "the genuinely most-recently-inserted event must sort first, "
+            "even though its `timestamp` string is numerically smaller"
+        )
+
 
 # ---------------------------------------------------------------------------
 # API-04, API-05: /api/search

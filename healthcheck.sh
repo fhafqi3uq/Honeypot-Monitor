@@ -54,6 +54,10 @@ check_and_restart "Cowrie SSH" \
     "pgrep -f 'twistd.*cowrie'" \
     "cd ~/Honeypot-Monitor/honeypot/cowrie-src && source cowrie-env/bin/activate && cowrie-env/bin/cowrie start"
 
+check_and_restart "Log Watcher" \
+    "pgrep -f 'log_watcher.py'" \
+    "cd ~/Honeypot-Monitor/parser && source venv/bin/activate && nohup python3 log_watcher.py > /tmp/log_watcher.log 2>&1 &"
+
 check_and_restart "FastAPI" \
     "curl -s http://localhost:8000/" \
     "cd ~/Honeypot-Monitor/parser && source venv/bin/activate && nohup uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &"
