@@ -204,7 +204,7 @@
 
       document.getElementById('human-sessions').innerHTML = (humanSessions.data || [])
         .map(s => {
-          const time = s.first_seen ? s.first_seen.substring(0,19).replace('T',' ') : '--'
+          const time = toVnDateTime(s.first_seen)
           const badge = s.likely_human
             ? '<span class="badge success">🧑 Có thể là người</span>'
             : '<span class="badge failed">🤖 Có thể là bot</span>'

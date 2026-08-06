@@ -17,6 +17,14 @@ function toVnTime(isoTimestamp) {
     return `${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}:${pad(vn.getUTCSeconds())}`
 }
 
+function toVnDateTime(isoTimestamp) {
+    if (!isoTimestamp) return "--"
+    const utc = new Date(isoTimestamp.endsWith("Z") ? isoTimestamp : isoTimestamp + "Z")
+    const vn  = new Date(utc.getTime() + VN_OFFSET_MS)
+    const pad = n => String(n).padStart(2, "0")
+    return `${vn.getUTCFullYear()}-${pad(vn.getUTCMonth()+1)}-${pad(vn.getUTCDate())} ${pad(vn.getUTCHours())}:${pad(vn.getUTCMinutes())}:${pad(vn.getUTCSeconds())}`
+}
+
 // Shared by index.html (via app.js), attacks.html, and search.html's attack
 // tables. Only cowrie.login.failed is an actual failed login attempt -
 // session.connect/session.closed are just connection lifecycle events (a

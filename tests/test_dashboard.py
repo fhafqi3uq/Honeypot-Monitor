@@ -454,3 +454,32 @@ class TestAttacksTableVietnamTime:
 
         expect(page.locator("#attack-tbody")).to_contain_text("09:58:53")
         expect(page.locator("#attack-tbody")).not_to_contain_text("02:58:53")
+
+    def test_human_likely_sessions_table_shows_vietnam_local_time_not_raw_utc(
+        self, page, live_stack_clean
+    ):
+        """stats.html's "Phiên nghi ngờ là người thật" table was missed in
+        the original attacks-table/search-page VN-time fix - its own
+        "Thời điểm" column still showed raw UTC. Caught live in production
+        (2026-08-06)."""
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        # Slow, distinct commands (several seconds apart) - classified
+        # likely_human by /api/sessions/human-likely's own heuristic.
+        test_db.attacks.insert_many([
+            {
+                "session": "sessH", "src_ip": "203.0.113.7", "country": "Vietnam",
+                "event": "cowrie.command.input", "command": cmd, "timestamp": ts,
+            }
+            for cmd, ts in [
+                ("whoami", "2026-08-06T02:58:53.000000Z"),
+                ("ls -la", "2026-08-06T02:59:01.000000Z"),
+                ("cat wallet.dat", "2026-08-06T02:59:10.000000Z"),
+            ]
+        ])
+        _login_via_ui(page, dashboard_url, username, password)
+
+        page.goto(f"{dashboard_url}/stats.html")
+
+        expect(page.locator("#human-sessions")).to_contain_text("2026-08-06 09:58:53", timeout=5000)
+        expect(page.locator("#human-sessions")).not_to_contain_text("2026-08-06 02:58:53")
