@@ -35,9 +35,9 @@ echo "✅ FastAPI started tại http://localhost:8000 (chỉ nội bộ)"
 
 # Dashboard (bind localhost only — cùng lý do như FastAPI ở trên)
 cd "$PROJECT_DIR/dashboard"
-pkill -f "live-server . --port=8080" 2>/dev/null; sleep 1
-nohup live-server . --port=8080 --host=127.0.0.1 > /tmp/dashboard.log 2>&1 &
-echo "✅ Dashboard started tại http://localhost:8080 (chỉ nội bộ)"
+pkill -f "live-server . --port=8081" 2>/dev/null; sleep 1
+nohup live-server . --port=8081 --host=127.0.0.1 > /tmp/dashboard.log 2>&1 &
+echo "✅ Dashboard started tại http://localhost:8081 (chỉ nội bộ)"
 
 # Realtime Alert
 cd "$PROJECT_DIR/notifier"
@@ -101,7 +101,7 @@ echo "✅ Healthcheck started (mỗi 30 giây)"
 
 echo ""
 echo "🎉 Hệ thống đã sẵn sàng!"
-echo "📊 Dashboard: http://localhost:8080"
+echo "📊 Dashboard: http://localhost:8081"
 echo "🔌 API:       http://localhost:8000"
 echo "📱 Telegram:  Cảnh báo realtime"
 echo "📋 Báo cáo:   Tự động 8h sáng"

@@ -63,8 +63,8 @@ check_and_restart "FastAPI" \
     "cd ~/Honeypot-Monitor/parser && source venv/bin/activate && nohup uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &"
 
 check_and_restart "Dashboard" \
-    "curl -s http://localhost:8080/" \
-    "cd ~/Honeypot-Monitor/dashboard && nohup live-server . --port=8080 --host=127.0.0.1 > /tmp/dashboard.log 2>&1 &"
+    "curl -s http://localhost:8081/" \
+    "cd ~/Honeypot-Monitor/dashboard && nohup live-server . --port=8081 --host=127.0.0.1 > /tmp/dashboard.log 2>&1 &"
 
 check_and_restart "Realtime Alert" \
     "pgrep -f 'realtime_alert.py'" \

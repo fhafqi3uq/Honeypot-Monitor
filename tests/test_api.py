@@ -13,10 +13,28 @@ from __future__ import annotations
 import csv
 import io
 import json
+import struct
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from prometheus_client.parser import text_string_to_metric_families
+
+# Mirrors the struct layout parser/main.py's _ttylog_to_frames() expects
+# (which itself mirrors Cowrie's own cowrie/core/ttylog.py writer):
+# (op, tty[unused], length, direction, sec, usec).
+_TTYLOG_STRUCT = "<iLiiLL"
+_OP_OPEN, _OP_CLOSE, _OP_WRITE = 1, 2, 3
+_TYPE_INPUT, _TYPE_OUTPUT = 1, 2
+
+
+def _build_ttylog(chunks):
+    """chunks: [(direction, bytes), ...], each written 1 second apart."""
+    buf = struct.pack(_TTYLOG_STRUCT, _OP_OPEN, 0, 0, 0, 1000, 0)
+    for i, (direction, data) in enumerate(chunks):
+        buf += struct.pack(_TTYLOG_STRUCT, _OP_WRITE, 0, len(data), direction, 1000 + i, 0)
+        buf += data
+    buf += struct.pack(_TTYLOG_STRUCT, _OP_CLOSE, 0, 0, 0, 1000 + len(chunks), 0)
+    return buf
 
 
 def _login(fresh_app, username="admin", password="Pass123!Aa"):
@@ -131,6 +149,67 @@ class TestSearch:
         r = client.get("/api/search?ip=1.2.3.4")
         assert r.status_code == 200
         assert r.json() == {"ip": "1.2.3.4", "total": 0, "data": []}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sessions/{id}/replay - session replay from Cowrie's binary TTY
+# logs (see parser/main.py's _ttylog_to_frames()).
+# ---------------------------------------------------------------------------
+class TestSessionReplay:
+    def test_404_when_no_log_closed_doc_for_session(self, fresh_app):
+        client, main, auth = _login(fresh_app)
+        r = client.get("/api/sessions/unknown-session/replay")
+        assert r.status_code == 404
+
+    def test_404_when_ttylog_file_missing_on_disk(self, fresh_app, tmp_path, monkeypatch):
+        client, main, auth = _login(fresh_app)
+        monkeypatch.setenv("TTYLOG_DIR", str(tmp_path))
+        main.collection.insert_one({
+            "session": "sess001", "event": "cowrie.log.closed",
+            "ttylog": "c" * 64, "src_ip": "203.0.113.7",
+        })
+        r = client.get("/api/sessions/sess001/replay")
+        assert r.status_code == 404
+
+    def test_404_when_ttylog_field_is_not_a_valid_hash(self, fresh_app, tmp_path, monkeypatch):
+        # Defense-in-depth against path traversal - parser.py/log_watcher.py
+        # only ever store a sha256 basename, so anything else means a
+        # corrupted/tampered row and must never reach os.path.join().
+        client, main, auth = _login(fresh_app)
+        monkeypatch.setenv("TTYLOG_DIR", str(tmp_path))
+        main.collection.insert_one({
+            "session": "sess003", "event": "cowrie.log.closed",
+            "ttylog": "../../etc/passwd", "src_ip": "203.0.113.7",
+        })
+        r = client.get("/api/sessions/sess003/replay")
+        assert r.status_code == 404
+
+    def test_replay_returns_output_frames_excluding_attacker_keystrokes(self, fresh_app, tmp_path, monkeypatch):
+        client, main, auth = _login(fresh_app)
+        monkeypatch.setenv("TTYLOG_DIR", str(tmp_path))
+
+        ttylog_hash = "d" * 64
+        raw = _build_ttylog([
+            (_TYPE_OUTPUT, b"login as attacker\n"),
+            (_TYPE_INPUT, b"whoami\n"),  # attacker keystrokes - must not appear in replay
+            (_TYPE_OUTPUT, b"root\n"),
+        ])
+        (tmp_path / ttylog_hash).write_bytes(raw)
+
+        main.collection.insert_one({
+            "session": "sess002", "event": "cowrie.log.closed",
+            "ttylog": ttylog_hash, "src_ip": "203.0.113.7",
+        })
+
+        r = client.get("/api/sessions/sess002/replay")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["src_ip"] == "203.0.113.7"
+        assert data["truncated"] is False
+        joined = "".join(f["data"] for f in data["frames"])
+        assert "login as attacker" in joined
+        assert "root" in joined
+        assert "whoami" not in joined
 
 
 # ---------------------------------------------------------------------------

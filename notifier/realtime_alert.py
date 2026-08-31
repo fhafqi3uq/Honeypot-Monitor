@@ -4,9 +4,11 @@ import time
 from datetime import datetime, timezone
 from pymongo import MongoClient
 from prometheus_client import start_http_server
-from bot import alert_login_failed, alert_login_success, alert_session_commands
+from bot import alert_login_failed, alert_login_success, alert_session_commands, send_message
+from correlation import CorrelationState, evaluate_event
 from notify_log_setup import get_logger
 from notify_mitre_mapping import map_mitre_techniques
+from notify_severity import classify_severity
 import notify_metrics
 
 logger = get_logger(__name__)
@@ -88,6 +90,13 @@ OFFSET_FILE = os.getenv(
 client     = MongoClient(os.getenv("MONGO_URL", "mongodb://localhost:27017"), **_mongo_auth_kwargs())
 db         = client[os.getenv("DB_NAME", "honeypot")]
 collection = db["attacks"]
+# Separate collection from "attacks" - a correlation alert isn't a single
+# Cowrie event, it's a rule firing across several of them (see
+# CorrelationAlert.matched_events), so it doesn't fit the attacks schema.
+# Mirrors the siem-dashboard reference's Alert.create_from_rule() persisting
+# before it notifies, adapted to this project's Telegram-push model instead
+# of an SSE stream.
+correlation_alerts_collection = db["correlation_alerts"]
 
 IMPORTANT_EVENTS = [
     "cowrie.login.failed",
@@ -102,6 +111,11 @@ IMPORTANT_EVENTS = [
 # earlier cowrie.session.connect line. Cached by session id and merged into
 # the IMPORTANT_EVENTS documents below instead of being stored on their own.
 SESSION_CACHE: dict[str, dict] = {}
+
+# Cross-event correlation (brute-force bursts, login->command compromise
+# chains, credential scans - see correlation.py) - one process-wide state
+# since watch_log() runs a single loop in this process.
+_CORRELATION_STATE = CorrelationState()
 
 def update_session_cache(raw: dict):
     eventid = raw.get("eventid", "")
@@ -156,6 +170,7 @@ def process_event(raw: dict):
     cached = SESSION_CACHE.get(session, {})
 
     # Lưu vào MongoDB
+    mitre_techniques = map_mitre_techniques(eventid, raw.get("input"))
     doc = {
         "timestamp":       raw.get("timestamp"),
         "src_ip":          ip,
@@ -170,7 +185,14 @@ def process_event(raw: dict):
         "hassh":           cached.get("hassh"),
         "hasshAlgorithms": cached.get("hasshAlgorithms"),
         "duration":        raw.get("duration") if eventid == "cowrie.session.closed" else None,
-        "mitre_techniques": map_mitre_techniques(eventid, raw.get("input")),
+        # Always None here: cowrie.log.closed (the only event that carries
+        # this field - see parser/log_watcher.py's matching comment) isn't
+        # in this file's IMPORTANT_EVENTS, it's not alert-worthy on its own.
+        # Key kept present anyway to match log_watcher.py's document shape -
+        # see AL-11 in tests/test_alerting.py.
+        "ttylog":          os.path.basename(raw["ttylog"]) if raw.get("ttylog") else None,
+        "mitre_techniques": mitre_techniques,
+        "severity":        classify_severity(mitre_techniques),
         "sensor":          raw.get("sensor", "honeypot-01"),
         "country":         geo["country"],
         "country_code":    geo["country_code"],
@@ -224,6 +246,44 @@ def process_event(raw: dict):
                 extra={"ip": ip, "event": eventid, "session": session},
             )
             notify_metrics.TELEGRAM_ALERTS_SENT.labels("cowrie.session.commands").inc()
+
+    # Cross-event correlation - separate from the per-event alerts above
+    # and gated by its own cooldown (see CorrelationState), not
+    # _should_alert(), so it isn't silenced by an unrelated login_failed/
+    # login_success alert firing for the same IP moments earlier.
+    for calert in evaluate_event(raw, _CORRELATION_STATE):
+        # Save-then-notify, same order as the siem-dashboard reference's
+        # Alert.create_from_rule() - the alert exists in Mongo (for
+        # /correlation_alerts history/dashboard use later) even if the
+        # Telegram send that follows fails or is rate-limited.
+        try:
+            correlation_alerts_collection.insert_one({
+                "rule_id":        calert.rule_id,
+                "group_key":      calert.group_key,
+                "severity":       calert.severity,
+                "message":        calert.message,
+                "matched_event_count": len(calert.matched_events),
+                "sensor":         raw.get("sensor", "honeypot-01"),
+                "created_at":     datetime.now(timezone.utc),
+            })
+        except Exception:
+            logger.error(
+                "Failed to insert correlation alert into MongoDB",
+                exc_info=True, extra={"rule_id": calert.rule_id, "ip": ip},
+            )
+            notify_metrics.CORRELATION_ALERT_INSERT_ERRORS.inc()
+            # Same all-or-nothing choice as the main attacks insert above -
+            # skip the Telegram push too rather than notify about an alert
+            # that has no durable record to back it (nothing for a
+            # dashboard/history view to show if someone clicks through).
+            continue
+
+        send_message(f"[correlation:{calert.severity}] {calert.message}")
+        logger.info(
+            "Sent correlation Telegram alert",
+            extra={"rule_id": calert.rule_id, "ip": ip, "event": eventid, "severity": calert.severity},
+        )
+        notify_metrics.TELEGRAM_ALERTS_SENT.labels(f"correlation.{calert.rule_id}").inc()
 
     # session closed -> nothing else will reference this session's cache
     if eventid == "cowrie.session.closed":

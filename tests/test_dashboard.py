@@ -294,6 +294,71 @@ class TestLogout:
 # ---------------------------------------------------------------------------
 # DB-08: map.html nav now matches the other 4 dashboard pages
 # ---------------------------------------------------------------------------
+class TestSessionReplayButton:
+    """
+    parser/main.py's GET /api/sessions/{id}/replay already has full backend
+    coverage (tests/test_api.py's TestSessionReplay). This checks the other
+    half - that attacks.html actually renders a "Xem lại" button for a
+    cowrie.log.closed row and wires it to playSessionReplay() (js/replay.js)
+    - not covered anywhere else, this was never actually clicked in a real
+    browser before.
+    """
+
+    def test_replay_button_shown_only_for_log_closed_rows_with_a_ttylog(
+        self, page, live_stack_clean
+    ):
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        test_db.attacks.insert_many(
+            [
+                {
+                    "event": "cowrie.log.closed", "src_ip": "203.0.113.7",
+                    "session": "sess001", "ttylog": "a" * 64,
+                    "timestamp": "2026-01-01T00:00:00",
+                },
+                # No ttylog (e.g. a session that never ran commands) - no
+                # replay data exists for it, button must not appear.
+                {
+                    "event": "cowrie.session.closed", "src_ip": "203.0.113.8",
+                    "session": "sess002", "ttylog": None,
+                    "timestamp": "2026-01-01T00:00:01",
+                },
+            ]
+        )
+        _login_via_ui(page, dashboard_url, username, password)
+
+        page.goto(f"{dashboard_url}/attacks.html")
+        expect(page.locator(".btn-replay")).to_have_count(1)
+
+    def test_clicking_replay_opens_the_modal_and_calls_the_replay_api(
+        self, page, live_stack_clean
+    ):
+        _, dashboard_url, test_db = live_stack_clean
+        username, password = _seed_user(test_db)
+        test_db.attacks.insert_one({
+            "event": "cowrie.log.closed", "src_ip": "203.0.113.7",
+            "session": "sess001", "ttylog": "a" * 64,
+            "timestamp": "2026-01-01T00:00:00",
+        })
+        _login_via_ui(page, dashboard_url, username, password)
+
+        page.goto(f"{dashboard_url}/attacks.html")
+        page.click(".btn-replay")
+
+        expect(page.locator("#replay-modal")).to_be_visible()
+        # No ttylog file actually exists on disk for this fake session
+        # (that round trip is what test_api.py's TestSessionReplay already
+        # covers against a real file) - the API's 404 is exactly what
+        # proves playSessionReplay() actually called it and rendered the
+        # response, not that a real replay played back.
+        expect(page.locator("#replay-status")).to_contain_text(
+            "TTY log", timeout=5000
+        )
+
+
+# ---------------------------------------------------------------------------
+# DB-08: map.html nav now matches the other 4 dashboard pages
+# ---------------------------------------------------------------------------
 class TestKnownNavBug:
     def test_db08_map_page_nav_has_search_link(self, page, live_stack_clean):
         """

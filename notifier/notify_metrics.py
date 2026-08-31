@@ -48,6 +48,10 @@ TELEGRAM_ALERTS_SENT = Counter(
     "Realtime Telegram alerts dispatched, by Cowrie event type",
     ["event"],
 )
+CORRELATION_ALERT_INSERT_ERRORS = Counter(
+    "honeypot_correlation_alert_insert_errors_total",
+    "MongoDB insert failures for a fired correlation.py rule's alert document",
+)
 
 # --- daily_report.py --------------------------------------------------------
 DAILY_REPORT_RUNS = Counter(

@@ -1,8 +1,10 @@
 import json
+import os
 from datetime import datetime, timezone
 from pymongo import MongoClient
 from geoip_lookup import get_geo
 from mitre_mapping import map_mitre_techniques
+from severity import classify_severity
 
 client     = MongoClient("mongodb://localhost:27017")
 db         = client["honeypot"]
@@ -14,6 +16,11 @@ IMPORTANT_EVENTS = [
     "cowrie.command.input",
     "cowrie.session.connect",
     "cowrie.session.closed",
+    # Carries the TTY log filename (a sha256 hash, not the raw path Cowrie
+    # writes - see main.py's /api/sessions/{id}/replay, which reads that
+    # hash back out of this field to find the file on disk) for a session's
+    # binary keystroke/output recording - what session replay is built on.
+    "cowrie.log.closed",
 ]
 
 # Events that carry no attacker action by themselves but hold forensic
@@ -47,6 +54,7 @@ def parse_event(raw: dict) -> dict | None:
     geo = get_geo(ip)
     session = raw.get("session")
     cached = SESSION_CACHE.get(session, {})
+    mitre_techniques = map_mitre_techniques(eventid, raw.get("input"))
 
     doc = {
         "timestamp":       raw.get("timestamp"),
@@ -62,7 +70,13 @@ def parse_event(raw: dict) -> dict | None:
         "hassh":           cached.get("hassh"),
         "hasshAlgorithms": cached.get("hasshAlgorithms"),
         "duration":        raw.get("duration") if eventid == "cowrie.session.closed" else None,
-        "mitre_techniques": map_mitre_techniques(eventid, raw.get("input")),
+        # Only cowrie.log.closed carries this field; stored as just the
+        # basename (the sha256 hash Cowrie renames the file to on close),
+        # never the full path, since that's a host filesystem detail the
+        # replay endpoint re-derives from its own TTYLOG_DIR.
+        "ttylog":          os.path.basename(raw["ttylog"]) if raw.get("ttylog") else None,
+        "mitre_techniques": mitre_techniques,
+        "severity":        classify_severity(mitre_techniques),
         "sensor":          raw.get("sensor", "honeypot-01"),
         "country":         geo["country"],
         "country_code":    geo["country_code"],

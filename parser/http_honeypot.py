@@ -29,6 +29,7 @@ from prometheus_client import start_http_server
 from pymongo import MongoClient
 
 import metrics
+from severity import classify_severity
 
 INTERNAL_PORT = int(os.getenv("HTTP_HONEYPOT_PORT", "8899"))
 METRICS_PORT = int(os.getenv("HTTP_HONEYPOT_METRICS_PORT", "9108"))
@@ -125,6 +126,10 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 def _log_event(request: Request, event: str, username: str = None, password: str = None):
     ip = request.client.host if request.client else "unknown"
     geo = get_geo(ip)
+    # Any credential submission gets the same T1110 (Brute Force) tag
+    # SSH/Telnet login attempts use - it's the same ATT&CK technique
+    # regardless of protocol - so it maps to the same severity too.
+    mitre_techniques = ["T1110"] if event == "http.login.attempt" else []
     doc = {
         "timestamp":  datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
         "src_ip":     ip,
@@ -138,10 +143,8 @@ def _log_event(request: Request, event: str, username: str = None, password: str
         "method":     request.method,
         "path":       "/" + str(request.url.path).lstrip("/"),
         "user_agent": request.headers.get("user-agent"),
-        # Any credential submission gets the same brute-force technique tag
-        # SSH/Telnet login attempts use - it's the same ATT&CK technique
-        # regardless of protocol.
-        "mitre_techniques": ["T1110"] if event == "http.login.attempt" else [],
+        "mitre_techniques": mitre_techniques,
+        "severity":   classify_severity(mitre_techniques),
         "sensor":     os.getenv("HTTP_HONEYPOT_SENSOR", "honeypot-01"),
         "country":    geo["country"],
         "country_code": geo["country_code"],

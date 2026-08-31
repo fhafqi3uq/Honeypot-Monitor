@@ -134,6 +134,7 @@ services:
       JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret_key
       MONGO_USERNAME_FILE: /run/secrets/mongo_app_username
       MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+      TTYLOG_DIR: /cowrie-tty
     secrets:
       - jwt_secret_key
       - mongo_app_username
@@ -143,6 +144,11 @@ services:
       # (2 levels up from /app/log_setup.py) - see CLAUDE.md if this looks
       # like a strange mount point.
       - ./logs/parser:/logs
+      # Session replay (GET /api/sessions/{id}/replay) reads Cowrie's
+      # binary TTY logs straight off disk by their sha256 filename - same
+      # native-Cowrie-on-host layout as parser-log-watcher's cowrie.json
+      # mount above, read-only for the same reason.
+      - ./honeypot/cowrie-src/var/lib/cowrie/tty:/cowrie-tty:ro
     depends_on:
       mongo:
         condition: service_healthy
@@ -428,6 +434,31 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     depends_on:
       - prometheus
+    restart: unless-stopped
+
+  # Per-container CPU/RAM metrics (google/cAdvisor) - separate from every
+  # other exporter here because it reads host-level cgroup/docker state
+  # (/sys, /var/run, the docker socket dir), not application-level metrics
+  # like the rest of this file. Only needed for the load-test report figure
+  # (Chương 3.4, Hình 3.5); same "observability" profile as
+  # prometheus/grafana so it's skipped by a bare `docker compose up -d`.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    profiles: ["observability"]
+    # WSL2's nested overlayfs (Docker's storage lives inside WSL2's own
+    # virtual disk, itself an overlay) breaks cAdvisor's raw disk-layer
+    # inspection ("failed to identify the read-write layer ID") - disabling
+    # the disk/diskIO collectors (which need that lookup) lets the cpu/
+    # memory collectors (what Hình 3.5 actually needs) register normally.
+    # Harmless to leave in place on a real Linux VPS too.
+    command:
+      - "--disable_metrics=disk,diskIO,percpu,sched,tcp,udp,advtcp,process,referenced_memory,cpu_topology,resctrl,hugetlb"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    expose: ["8080"]
     restart: unless-stopped
 
 volumes:

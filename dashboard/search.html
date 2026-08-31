@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Tìm kiếm IP — Honeypot</title>
   <link rel="stylesheet" href="css/style.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 </head>
 <body style="visibility:hidden">
   <div class="sidebar" id="sidebar">
@@ -104,6 +106,41 @@
 
   </div>
 
+  <!-- Modal xem lại phiên (session replay) -->
+  <div id="replay-modal" class="replay-modal">
+    <div class="replay-modal-box">
+      <div class="replay-modal-header">
+        <strong>▶ Xem lại phiên tấn công</strong>
+        <button class="replay-close" onclick="closeReplayModal()">✕</button>
+      </div>
+      <div id="replay-status" class="replay-status">Đang tải...</div>
+      <div id="replay-term" class="replay-term"></div>
+      <div class="replay-controls">
+        <button id="replay-playpause" onclick="toggleReplayPlayPause()">⏸</button>
+        <button onclick="restartReplay()">⟲ Phát lại</button>
+        <label>Tốc độ
+          <select id="replay-speed" onchange="setReplaySpeed(this.value)">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  </div>
+  <style>
+    .replay-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center}
+    .replay-modal-box{background:var(--surface,#12141e);border:1px solid var(--border-strong,rgba(255,255,255,.12));border-radius:var(--radius,14px);width:min(820px,92vw);padding:16px;box-shadow:var(--shadow-lg,0 20px 48px -12px rgba(0,0,0,.65))}
+    .replay-modal-header{display:flex;justify-content:space-between;align-items:center;color:var(--ink,#eef1f8);margin-bottom:8px}
+    .replay-close{background:none;border:none;color:var(--ink-secondary,#9aa4bd);font-size:16px;cursor:pointer}
+    .replay-status{color:var(--ink-secondary,#9aa4bd);font-size:12px;margin-bottom:10px}
+    .replay-term{background:#0b0d14;border-radius:var(--radius-sm,9px);padding:8px;height:360px;overflow:hidden}
+    .replay-controls{display:flex;gap:12px;align-items:center;margin-top:10px;color:var(--ink-secondary,#9aa4bd);font-size:13px}
+    .replay-controls button{background:var(--surface-2,#171a26);border:1px solid var(--border,rgba(255,255,255,.07));color:var(--ink,#eef1f8);border-radius:var(--radius-sm,9px);padding:6px 14px;cursor:pointer}
+    .btn-replay{background:var(--blue-soft,rgba(57,135,229,.14));color:var(--blue,#3987e5);border:none;border-radius:var(--radius-sm,9px);padding:4px 10px;font-size:12px;cursor:pointer}
+  </style>
+
   <script src="js/escape.js"></script>
   <script>
     const API_URL = "http://localhost:8000"
@@ -173,13 +210,19 @@
           }
           const { status, label } = EVENT_LABELS[a.event] || { status: 'failed', label: a.event }
           const time      = toVnDateTime(a.timestamp)
+          // Only cowrie.log.closed docs carry a ttylog hash (see
+          // parser/parser.py) - that's the one row per SSH session a
+          // "Xem lại" (replay) button can actually be attached to.
+          const replayBtn = (a.event === 'cowrie.log.closed' && a.ttylog && a.session)
+            ? `<button class="btn-replay" onclick="playSessionReplay('${encodeURIComponent(a.session)}')">▶ Xem lại</button>`
+            : ''
           return `
             <tr>
               <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${escapeHtml(time)}</td>
               <td style="color:#64748b;font-size:12px">${escapeHtml((a.event||'').replace('cowrie.',''))}</td>
               <td style="color:#e2e8f0">${escapeHtml(a.username)||'-'}</td>
               <td style="font-family:monospace;color:#94a3b8;font-size:12px">${escapeHtml(a.password)||'-'}</td>
-              <td><span class="badge ${status}">${label}</span></td>
+              <td><span class="badge ${status}">${label}</span> ${replayBtn}</td>
             </tr>`
         }).join('')
 
@@ -200,6 +243,7 @@
     }
   </script>
   <script src="js/auth.js"></script>
+  <script src="js/replay.js"></script>
   <script>requireAuth()</script>
 </body>
 </html>

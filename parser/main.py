@@ -1,4 +1,6 @@
 import os
+import re
+import struct
 import time
 from datetime import datetime
 
@@ -67,6 +69,89 @@ logger.info(
 )  # deliberately not logging MONGO_URL - it may embed credentials (mongodb://user:pass@host)
 
 COOKIE_KWARGS = {"httponly": True, "samesite": "lax", "secure": False, "path": "/"}
+
+# Cowrie renames a TTY log to its sha256 content hash on close (see
+# cowrie/core/ttylog.py's ttylog_inputhash()) and that's the only form
+# parser.py/log_watcher.py ever store in the "ttylog" field - anything else
+# in that field would mean a corrupted/tampered DB row, and letting it
+# through to os.path.join() below would be a path-traversal read of
+# arbitrary files inside the container.
+_TTYLOG_HASH_RE = re.compile(r"^[0-9a-f]{16,64}$")
+
+# A pathological/hostile session (e.g. `cat` on a huge file, or a flood
+# script) can make a TTY log arbitrarily large - this caps how much of it
+# a single replay request will parse and return, so one such session can't
+# turn a replay request into a multi-hundred-MB JSON response.
+_TTYLOG_MAX_BYTES = 2 * 1024 * 1024
+
+# Struct layout Cowrie's own ttylog writer uses (cowrie/core/ttylog.py):
+# (op, tty[unused], length, direction, sec, usec).
+_TTYLOG_STRUCT = "<iLiiLL"
+_TTYLOG_OP_WRITE, _TTYLOG_OP_CLOSE = 3, 2
+_TTYLOG_TYPE_OUTPUT, _TTYLOG_TYPE_INTERACT = 2, 3
+
+
+def _ttylog_to_frames(raw: bytes) -> tuple[list[dict], float, bool]:
+    """Ports the direction-selection logic from Cowrie's own
+    scripts/asciinema.py and scripts/playlog.py (the tools Cowrie ships to
+    replay these binary logs) rather than re-deriving it: the first
+    OP_WRITE direction seen (other than TYPE_INTERACT, which is exec-mode
+    command echo and always shown) is treated as "the output stream" a
+    viewer would want replayed - a raw ttylog also contains the attacker's
+    own keystrokes (TYPE_INPUT), which would otherwise double up with the
+    shell's echo of them.
+
+    Returns (frames, duration_seconds, truncated) where each frame is
+    {"t": seconds-since-first-frame, "data": str}.
+    """
+    ssize = struct.calcsize(_TTYLOG_STRUCT)
+    offset = 0
+    currtty = None
+    prefdir = 0
+    start_time: float | None = None
+    frames: list[dict] = []
+    total_bytes = 0
+    truncated = False
+
+    while offset + ssize <= len(raw):
+        op, tty, length, direction, sec, usec = struct.unpack(
+            _TTYLOG_STRUCT, raw[offset : offset + ssize]
+        )
+        offset += ssize
+        data = raw[offset : offset + length]
+        offset += length
+
+        if currtty is None:
+            currtty = tty
+        if tty != currtty:
+            continue
+
+        if op == _TTYLOG_OP_CLOSE:
+            break
+        if op != _TTYLOG_OP_WRITE:
+            continue
+
+        if prefdir == 0 and direction != _TTYLOG_TYPE_INTERACT:
+            prefdir = direction
+        if direction != prefdir and direction != _TTYLOG_TYPE_INTERACT:
+            continue
+
+        total_bytes += length
+        if total_bytes > _TTYLOG_MAX_BYTES:
+            truncated = True
+            break
+
+        t = sec + usec / 1_000_000
+        if start_time is None:
+            start_time = t
+        # errors="replace": attacker-controlled bytes can be arbitrary
+        # binary/invalid UTF-8, and a multi-byte sequence can legitimately
+        # straddle two separate ttylog writes - this trades perfect
+        # fidelity on those rare boundary bytes for never raising here.
+        frames.append({"t": round(t - start_time, 3), "data": data.decode("utf-8", errors="replace")})
+
+    duration = frames[-1]["t"] if frames else 0.0
+    return frames, duration, truncated
 
 
 # --- Prometheus metrics -----------------------------------------------------
@@ -620,6 +705,46 @@ def get_human_likely_sessions(limit: int = 20, user: str = Depends(auth.get_curr
 
     results.sort(key=lambda r: (not r["likely_human"], -r["avg_gap_seconds"]))
     return {"data": results[:limit]}
+
+@api_router.get("/sessions/{session_id}/replay")
+def get_session_replay(session_id: str, user: str = Depends(auth.get_current_user)):
+    """Converts the session's Cowrie TTY log into a JSON frame list the
+    dashboard's replay viewer can step through on an xterm.js terminal -
+    see dashboard/js/replay.js. Read live via os.getenv() rather than a
+    module-level constant so it always reflects the current environment
+    (and so tests can monkeypatch it per-case without re-importing main.py)."""
+    ttylog_dir = os.getenv("TTYLOG_DIR", "/cowrie-tty")
+
+    doc = collection.find_one(
+        {"session": session_id, "event": "cowrie.log.closed", "ttylog": {"$ne": None}},
+        {"_id": 0, "ttylog": 1, "src_ip": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Không có bản ghi phiên (TTY log) cho session này")
+
+    ttylog_hash = doc["ttylog"]
+    if not _TTYLOG_HASH_RE.match(ttylog_hash):
+        # Can only happen from a corrupted/tampered DB row - a value
+        # parser.py/log_watcher.py never write themselves (see their own
+        # comment on this field).
+        raise HTTPException(status_code=404, detail="TTY log không hợp lệ")
+
+    path = os.path.join(ttylog_dir, ttylog_hash)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File TTY log không còn tồn tại trên đĩa")
+
+    with open(path, "rb") as f:
+        raw = f.read()
+
+    frames, duration, truncated = _ttylog_to_frames(raw)
+    return {
+        "session": session_id,
+        "src_ip": doc.get("src_ip"),
+        "duration": duration,
+        "truncated": truncated,
+        "frames": frames,
+    }
+
 
 @api_router.get("/search")
 def search_ip(ip: str = Query(...), user: str = Depends(auth.get_current_user)):

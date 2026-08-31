@@ -118,6 +118,16 @@ class TestLoggedDocumentSchema:
         assert "created_at" in doc
         assert "timestamp" in doc
         assert doc["sensor"]
+        assert doc["severity"] == "low"  # bare http.request has no MITRE technique tagged
+
+    def test_login_attempt_severity_matches_ssh_brute_force(self, client, http_honeypot):
+        # http.login.attempt is tagged T1110, same technique (and severity)
+        # as a Cowrie cowrie.login.failed - it's the same ATT&CK technique
+        # regardless of protocol (see parser/http_honeypot.py's comment).
+        client.post("/admin/login.php", data={"username": "admin", "password": "admin"})
+        doc = _docs(http_honeypot)[0]
+
+        assert doc["severity"] == "low"
 
     def test_mongo_insert_failure_does_not_break_response(self, client, http_honeypot, monkeypatch):
         def _boom(*args, **kwargs):

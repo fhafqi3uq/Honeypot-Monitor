@@ -489,6 +489,18 @@ def e2e_watcher_session(cowrie_process):
 
     mock_send_message = Mock(return_value=True)
     bot.send_message = mock_send_message
+    # alert_login_failed/alert_login_success/alert_session_commands call
+    # send_message() from inside bot.py, so patching bot.send_message above
+    # covers them (Python resolves that name from bot.py's own globals at
+    # call time). But realtime_alert.py's correlation block calls
+    # send_message(...) directly - that name was bound into realtime_alert's
+    # OWN namespace at `from bot import ... send_message` import time, a
+    # separate reference the line above never touches. Without this second
+    # patch, a correlation rule firing during an E2E test would call the
+    # REAL bot.send_message and hit the real Telegram credentials in
+    # notifier/.env - exactly what mocking send_message here is meant to
+    # prevent.
+    realtime_alert.send_message = mock_send_message
     realtime_alert.collection.delete_many({})
 
     thread = threading.Thread(target=realtime_alert.watch_log, daemon=True)
@@ -505,10 +517,24 @@ def e2e_watcher_session(cowrie_process):
 def e2e_watcher(e2e_watcher_session):
     """Per-test view of the session-wide watcher: clears the attacks
     collection and the mock's call history so each test starts from a
-    clean slate, without restarting the (unstoppable) watcher thread."""
+    clean slate, without restarting the (unstoppable) watcher thread.
+
+    Also clears _LAST_ALERT_TIME and _CORRELATION_STATE - every E2E attack
+    connects from the same source IP (127.0.0.1), so without this an
+    earlier test's alert cooldown (ALERT_COOLDOWN_SECONDS = 5 minutes) or
+    correlation-rule cooldown (CORRELATION_COOLDOWN_SECONDS, also 5
+    minutes) silently suppresses a later test's alert for the same
+    (ip, alert_type)/(rule_id, group_key) - both dicts are otherwise
+    module-level state that outlives any single test, since
+    e2e_watcher_session (unlike this fixture) is session-scoped. Caught
+    live: test_e2e02/test_e2e04a failed exactly this way (0 alerts) when
+    run after test_e2e01 already alerted for 127.0.0.1 moments earlier.
+    """
     realtime_alert, mock_send_message, collection = e2e_watcher_session
     collection.delete_many({})
     mock_send_message.reset_mock()
+    realtime_alert._LAST_ALERT_TIME.clear()
+    realtime_alert._CORRELATION_STATE = realtime_alert.CorrelationState()
     return realtime_alert, mock_send_message, collection
 
 
@@ -629,6 +655,26 @@ def make_closed_event(session="sess001", duration="212.6", **overrides):
         "duration": duration,
         "sensor": "honeypot-01",
         "timestamp": "2026-04-12T11:43:14.000Z",
+    }
+    event.update(overrides)
+    return event
+
+
+def make_log_closed_event(session="sess001", ttylog_hash="a" * 64, **overrides):
+    # Mirrors Cowrie's real cowrie.log.closed shape (see
+    # honeypot/sample_log.json): `ttylog` is the full path Cowrie writes,
+    # e.g. "var/lib/cowrie/tty/<sha256>" - parse_event() is expected to
+    # strip it down to just the basename hash before storing.
+    event = {
+        "eventid": "cowrie.log.closed",
+        "session": session,
+        "ttylog": f"var/lib/cowrie/tty/{ttylog_hash}",
+        "size": 1640,
+        "shasum": ttylog_hash,
+        "duplicate": False,
+        "duration": "202.3",
+        "sensor": "honeypot-01",
+        "timestamp": "2026-04-12T11:43:12.000Z",
     }
     event.update(overrides)
     return event
