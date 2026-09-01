@@ -35,11 +35,11 @@ app = FastAPI(
 # a new /api/* endpoint added later gets rate-limited automatically.
 api_router = APIRouter(prefix="/api", dependencies=[Depends(auth.check_api_rate_limit)])
 
-# Dashboard is a separate static origin (live-server on :8080). Cookies are
+# Dashboard is a separate static origin (live-server on :8081). Cookies are
 # httpOnly, so the browser must be told the API trusts that exact origin
 # with credentials - `allow_origins=["*"]` cannot be combined with
 # `allow_credentials=True` (browsers reject the combination outright).
-DASHBOARD_ORIGIN = os.getenv("DASHBOARD_ORIGIN", "http://localhost:8080")
+DASHBOARD_ORIGIN = os.getenv("DASHBOARD_ORIGIN", "http://localhost:8081")
 
 app.add_middleware(
     CORSMiddleware,
