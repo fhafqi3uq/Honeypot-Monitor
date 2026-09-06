@@ -211,11 +211,14 @@ services:
     secrets:
       - mongo_app_username
       - mongo_app_password
-    # 8899 (the fake login page itself) is NOT published to the host here -
-    # in the native start.sh workflow it's NAT'd from public port 80 (see
-    # deploy/expose_webtrap_port80.sh); this container-only deployment path
-    # doesn't attempt that, so it's reachable inside the Compose network
-    # only unless you add your own port mapping. 9108 is its own /metrics.
+    # 8899 (the fake login page itself) is published on ALL interfaces, not
+    # just 127.0.0.1 - deploy/expose_webtrap_port80.sh NATs public port 80
+    # to it via iptables REDIRECT, which rewrites the destination to the
+    # incoming (public) interface's own address, never to 127.0.0.1 - a
+    # loopback-only bind here is unreachable from that NAT path. 9108 is
+    # its own /metrics.
+    ports:
+      - "8899:8899"
     expose: ["9108"]
     volumes:
       - ./parser/geoip:/app/geoip:ro
