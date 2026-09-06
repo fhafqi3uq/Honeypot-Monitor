@@ -201,8 +201,20 @@ services:
     build: ./parser
     command: ["python", "http_honeypot.py"]
     env_file: ./parser/.env
+    # network_mode: host - NOT bridge like the other services. A normal
+    # Docker bridge + `ports:` publish still goes through Docker's own
+    # NAT: real attacker traffic arrives via the OS-level iptables REDIRECT
+    # (public port 80 -> 8899, see deploy/expose_webtrap_port80.sh) already
+    # addressed to a local address, which Docker then treats as a
+    # loopback/hairpin connection to the published port and re-writes the
+    # source IP to its own bridge gateway (observed live: every
+    # http.login.attempt recorded the attacker as 172.18.0.1 "Local"
+    # instead of their real IP - found while rehearsing the demo, 2026-09).
+    # host networking sidesteps Docker's NAT entirely, matching how Cowrie
+    # (native, not containerized) already preserves real source IPs.
+    network_mode: host
     environment:
-      MONGO_URL: mongodb://mongo:27017
+      MONGO_URL: mongodb://127.0.0.1:27017
       DB_NAME: honeypot
       MONGO_AUTH_SOURCE: honeypot
       GEOIP_DB_PATH: /app/geoip/GeoLite2-City.mmdb
@@ -211,15 +223,6 @@ services:
     secrets:
       - mongo_app_username
       - mongo_app_password
-    # 8899 (the fake login page itself) is published on ALL interfaces, not
-    # just 127.0.0.1 - deploy/expose_webtrap_port80.sh NATs public port 80
-    # to it via iptables REDIRECT, which rewrites the destination to the
-    # incoming (public) interface's own address, never to 127.0.0.1 - a
-    # loopback-only bind here is unreachable from that NAT path. 9108 is
-    # its own /metrics.
-    ports:
-      - "8899:8899"
-    expose: ["9108"]
     volumes:
       - ./parser/geoip:/app/geoip:ro
       - ./logs/parser:/logs
